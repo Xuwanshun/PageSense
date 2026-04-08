@@ -1,0 +1,45 @@
+# pyproject.toml — project configuration for pytest and ruff.
+#
+# WHY this file exists
+# --------------------
+# Previously there was no test configuration at all. This file tells:
+#   - pytest where to find tests and how to run them
+#   - ruff (linter) what rules to enforce and what to ignore
+
+[tool.pytest.ini_options]
+# Where pytest looks for test files
+testpaths = ["tests"]
+# Naming conventions for test discovery
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# Default flags:
+#   --tb=short    concise traceback on failures
+#   -q            quiet mode (no dots, just failures)
+#   --cov=.       measure coverage for the whole project
+addopts = "--tb=short -q"
+# Tell pytest-asyncio to auto-detect async test functions
+# (needed for FastAPI endpoint tests)
+asyncio_mode = "auto"
+
+[tool.ruff]
+# Target Python version — must match the Dockerfile base image
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Rules enabled:
+#   E, W: pycodestyle (style errors)
+#   F:    pyflakes (undefined names, unused imports)
+#   I:    isort (import ordering)
+#   UP:   pyupgrade (use modern Python syntax)
+#   B:    flake8-bugbear (common bug patterns)
+select = ["E", "W", "F", "I", "UP", "B"]
+# Rules ignored:
+#   E501: line too long (ruff format handles this)
+#   B008: function calls in default arguments (FastAPI uses this pattern legitimately)
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files can use assert statements freely
+"tests/**" = ["S101"]

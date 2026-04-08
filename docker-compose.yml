@@ -1,0 +1,96 @@
+# ── docker-compose.yml ────────────────────────────────────────────────────────
+# Local development configuration.
+#
+# HOW docker-compose WORKS
+# ─────────────────────────
+# docker-compose is a tool that starts multiple Docker containers together,
+# each described by a "service" block. For our app there is just one service
+# (rag), but compose still handles:
+#   - Building the image from the Dockerfile
+#   - Mounting volumes (so data survives container restarts)
+#   - Loading secrets from your .env file (without baking them into the image)
+#   - Forwarding ports from your machine to the container
+#   - Running health checks
+#
+# QUICKSTART
+# ──────────
+#   1. Copy .env.example → .env and fill in OPENAI_API_KEY
+#   2. docker-compose build          (first time: ~20 min due to Paddle models)
+#   3. docker-compose up             (start the API on http://localhost:8000)
+#   4. docker-compose logs -f        (follow logs in another terminal)
+#
+# USEFUL COMMANDS
+# ───────────────
+#   docker-compose up --build        rebuild image and start
+#   docker-compose down              stop and remove containers
+#   docker-compose exec rag bash     open a shell inside the running container
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Build only to the "deps" stage for a faster local build that skips
+      # the model pre-download (models will download on first use instead).
+      # Comment out the target line to build the full image with models baked in.
+      # target: deps
+
+    ports:
+      # Format: "HOST_PORT:CONTAINER_PORT"
+      # After `docker-compose up`, your app is at http://localhost:8000
+      - "8000:8000"
+
+    env_file:
+      # Load OPENAI_API_KEY and other secrets from your local .env file.
+      # This is the safe way: the values are injected at runtime, NOT baked
+      # into the image. docker-compose never commits .env to git.
+      - .env
+
+    environment:
+      # These values override what's in .env and the Dockerfile defaults.
+      # Use text format locally (readable in docker-compose logs output).
+      LOG_FORMAT: text
+      LOG_LEVEL: INFO
+      APP_MODE: api
+      # Data directories inside the container (must match the volume mounts below)
+      RAW_DOCUMENTS_DIR: /app/data/raw
+      PROCESSED_DOCUMENTS_DIR: /app/data/processed
+      VECTORSTORE_DIR: /app/data/embedded
+      # Point to the named volume where Paddle models are cached
+      PADDLE_CACHE_DIR: /app/paddle_models
+      PADDLE_PDX_CACHE_HOME: /app/paddle_models
+
+    volumes:
+      # Mount your local ./data directory into the container at /app/data.
+      # This means:
+      #   - PDFs you put in data/raw/ are immediately available to the container
+      #   - Processed artifacts written by the container appear in your data/processed/
+      #   - The vector store survives container restarts
+      # Without this volume, all processed data is lost when the container stops.
+      - ./data:/app/data
+
+      # Named volume for Paddle ML models.
+      # WHY a named volume (not a bind mount): model files are generated inside
+      # the container during the first run. A named volume is managed by Docker
+      # and persists across `docker-compose down` + `docker-compose up`.
+      # Without this, models re-download every time you restart (adds ~5 min).
+      - paddle_models:/app/paddle_models
+
+    healthcheck:
+      # Docker checks /health every 30 seconds.
+      # start_period=120s: wait 2 minutes before starting health checks
+      # (Paddle model loading takes time on first start).
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+    restart: unless-stopped
+
+# Named volumes are managed by Docker (persisted across container restarts).
+# They live in Docker's internal storage (usually /var/lib/docker/volumes/).
+# Run `docker volume ls` to see them, `docker volume rm <name>` to delete.
+volumes:
+  paddle_models:

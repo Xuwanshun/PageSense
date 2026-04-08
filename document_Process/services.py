@@ -51,17 +51,31 @@ FIGURE_LABELS = {"image", "figure", "chart", "graph"}
 logger = logging.getLogger(__name__)
 
 
-def _configure_paddle_env() -> None:
-    cache_home = Path(".paddlex").resolve()
+def _configure_paddle_env(cache_dir: Path) -> None:
+    """
+    Set environment variables that control where PaddleOCR/PaddleX store their
+    downloaded models and temporary files.
+
+    WHY this exists: PaddlePaddle reads these env vars before downloading any
+    model. If we don't set them, Paddle defaults to writing into the current
+    working directory (a `.paddlex/` folder), which:
+      - pollutes the project root on local machines
+      - writes into a read-only or wrong directory inside Docker containers
+
+    WHY it no longer runs at import time: The original code called this at
+    module level (`_configure_paddle_env()` on line 64), which meant it fired
+    as soon as any file imported `document_Process.services` — including in
+    unit tests that never touch Paddle. Explicit is better than implicit.
+    Now it is called once from DocumentLoaderService.__init__() when a real
+    document load is actually about to happen.
+    """
+    cache_home = cache_dir.resolve()
     cache_home.mkdir(parents=True, exist_ok=True)
     (cache_home / "temp").mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(cache_home))
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
-
-
-_configure_paddle_env()
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,9 @@ class LoadedDocument:
 class DocumentLoaderService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Configure Paddle cache now that we have the settings object.
+        # This is the earliest point we know the correct cache directory.
+        _configure_paddle_env(settings.paddle_cache_dir)
 
     def load(self, source_path: Path, *, document_id: str | None = None) -> LoadedDocument:
         logger.info("Loading document for preprocessing: %s", source_path)

@@ -1,10 +1,53 @@
+# ── Python ────────────────────────────────────────────────────────────────────
 .venv/
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+# NEVER commit .env — it contains your OPENAI_API_KEY and other secrets.
+# Use .env.example (committed, no real values) to document what is needed.
 .env
-.DS_Store
+.env.*
+!.env.example
+
+# ── Data directories ──────────────────────────────────────────────────────────
+# These directories hold large files (PDFs, OCR artifacts, vector stores,
+# ML model weights) that should NOT be in git. They are handled by:
+#   - Docker volumes (local development)
+#   - S3 (AWS deployment)
+#
+# The .gitkeep files inside these directories ARE committed so git
+# preserves the directory structure even when the contents are ignored.
+data/raw/*
+data/processed/*
+data/embedded/*
+data/.paddlex_cache/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/embedded/.gitkeep
+
+# Old capitalized Data/ directory (renamed to lowercase data/)
+Data/
+
+# ── Paddle model cache ────────────────────────────────────────────────────────
+# The original code put this in .paddlex/ at the project root.
+# The new code uses data/.paddlex_cache/ instead.
 .paddlex/
+
+# ── Tests and coverage ───────────────────────────────────────────────────────
 .pytest_cache/
-Data/Processed/
-Data/Embedded/
+.coverage
+htmlcov/
+coverage.xml
+
+# ── IDE and OS ────────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp

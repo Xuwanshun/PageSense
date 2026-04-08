@@ -1,0 +1,131 @@
+# ── .github/workflows/ci.yml ──────────────────────────────────────────────────
+# Continuous Integration (CI) workflow.
+#
+# WHAT IS CI?
+# ───────────
+# CI automatically runs checks on every code change to catch problems early.
+# "Continuous" means it runs every time you push code — not just before deploys.
+#
+# Think of CI as your automated code reviewer that:
+#   - Checks formatting and code style (lint)
+#   - Runs automated tests
+#   - Verifies the Docker image builds without errors
+#
+# This workflow runs on:
+#   - Every push to any branch
+#   - Every pull request targeting main
+#
+# It does NOT deploy to AWS. Deployment is in deploy.yml (main branch only).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]  # every branch
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Lint ─────────────────────────────────────────────────────────────
+  # ruff checks code style and common bugs. Fast (~5 seconds).
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        # Install only ruff (not the full requirements) for speed.
+        run: pip install "ruff>=0.4,<1"
+
+      - name: Run ruff linter
+        # ruff check: finds bugs and style issues
+        run: ruff check .
+
+      - name: Run ruff formatter check
+        # ruff format --check: verifies formatting without changing files
+        # (fails if any file would be reformatted)
+        run: ruff format --check .
+
+  # ── Job 2: Test ─────────────────────────────────────────────────────────────
+  # Run unit tests. Does NOT install Paddle (too slow/heavy for CI).
+  # Tests that require Paddle are automatically skipped.
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          # Cache pip packages between runs to speed up subsequent builds.
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev dependencies
+        # requirements-dev.txt includes everything except paddlepaddle.
+        # This is intentional: Paddle is ~3.5 GB and would make CI too slow.
+        run: pip install -r requirements-dev.txt
+
+      - name: Run unit tests with coverage
+        env:
+          # Tests that check env var reading need a value here.
+          # "fake" is fine — tests mock any real API calls.
+          OPENAI_API_KEY: "sk-fake-ci-key"
+        run: |
+          pytest tests/unit/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -v
+
+      - name: Upload coverage report
+        # Makes coverage results visible in the GitHub Actions summary.
+        uses: codecov/codecov-action@v4
+        if: always()  # upload even if tests fail
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false  # don't fail CI just because coverage upload fails
+
+  # ── Job 3: Docker build check ────────────────────────────────────────────────
+  # Verify the Dockerfile is valid and Python packages install correctly.
+  # We build only to the "deps" stage (stops before model download) for speed.
+  # This catches:
+  #   - Syntax errors in the Dockerfile
+  #   - Missing OS packages (e.g. libgomp1)
+  #   - pip install failures (e.g. version conflicts, missing packages)
+  build-check:
+    name: Docker build check (deps stage)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        # Buildx enables advanced features like layer caching.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (deps stage only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # Build to the deps stage — skips the 15-min model download.
+          # This validates pip install and OS dependencies in ~3-5 minutes.
+          target: deps
+          push: false  # don't push to any registry in CI
+          # Cache layers between CI runs to speed up subsequent builds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

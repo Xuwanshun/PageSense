@@ -1,10 +1,60 @@
-# Runtime dependencies for local Linux execution.
-# Optional: install `chromadb` separately if you want the Chroma vector store backend.
+# ── Core runtime dependencies ────────────────────────────────────────────────
+# These are installed in the Docker image and required in production.
+
+# Data validation (used throughout the codebase for models and config)
 pydantic>=2.10,<3
-python-dotenv>=1.0,<2
-Pillow>=10.0,<12
+
+# Reads settings from environment variables and .env files automatically.
+# Replaces the manual dotenv + os.getenv pattern in the original config.py.
+pydantic-settings>=2.0,<3
+
+# HTTP API framework (FastAPI) + ASGI server (uvicorn)
+# fastapi: defines endpoints, validates request/response bodies
+# uvicorn: the actual HTTP server that runs FastAPI in production
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+
+# Required by FastAPI to accept file uploads (multipart/form-data)
+python-multipart>=0.0.9,<1
+
+# Structured JSON logging for CloudWatch Insights.
+# Set LOG_FORMAT=json to activate. Falls back to text if not installed.
+python-json-logger>=2.0,<3
+
+# AWS SDK — used for S3 sync (storing/loading processed artifacts in ECS).
+# Not needed for local development unless S3_BUCKET_NAME is set.
+boto3>=1.34,<2
+
+# ── OCR and document processing ──────────────────────────────────────────────
+# opencv-python-headless MUST come before paddleocr/paddlex.
+# The headless variant provides cv2 without linking against OpenGL/X11 display
+# libraries. When pip sees cv2 is already installed it won't pull in the full
+# opencv-python (which would require libgl1 and the entire Mesa/LLVM stack).
+opencv-python-headless>=4.8,<5
+# WARNING: paddlepaddle + paddleocr + paddlex are large (~3.5 GB installed).
+# They are NOT installed in requirements-dev.txt to keep CI fast.
+# Tests that require Paddle must be skipped in CI with:
+#   @pytest.mark.skipif(not os.getenv("PADDLE_AVAILABLE"), reason="paddle not installed")
+
+# PDF rendering to images
 pypdfium2>=4.30,<5
+
+# Image processing (used by CroppingService for region extraction)
+Pillow>=10.0,<12
+
+# PaddlePaddle deep learning framework
 paddlepaddle>=3.2,<4
+
+# PaddleOCR text detection and recognition
 paddleocr>=3.3,<4
+
+# PaddleX pipeline (includes layout detection model PP-DocLayout_plus-L)
 paddlex[ocr]>=3.4,<4
+
+# ── LLM / Embeddings ─────────────────────────────────────────────────────────
 openai>=2.30,<3
+
+# ── Optional: Chroma vector store ────────────────────────────────────────────
+# Uncomment to use ChromaDB instead of the built-in JSON vector store.
+# Also set PREFER_CHROMA=true in your .env or environment.
+# chromadb>=0.5,<1

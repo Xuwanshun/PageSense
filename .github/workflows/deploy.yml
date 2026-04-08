@@ -1,0 +1,169 @@
+# ── .github/workflows/deploy.yml ─────────────────────────────────────────────
+# Continuous Deployment (CD) workflow.
+#
+# WHAT IS CD?
+# ───────────
+# CD automatically deploys your app to AWS whenever CI passes on the main branch.
+# "Continuous" means every push to main = a new deploy. No manual steps.
+#
+# This workflow:
+#   1. Builds the full Docker image (all stages, including model download)
+#   2. Pushes it to ECR
+#   3. Updates the ECS service to use the new image
+#   4. Waits for ECS to finish rolling out the new version
+#   5. Smoke tests the deployment by calling /health
+#
+# WHEN DOES IT RUN?
+#   Only on push to main branch, AND only after CI (lint + test + build-check)
+#   passes. You can't deploy broken code.
+#
+# HOW ROLLBACK WORKS:
+#   If the new container is unhealthy, ECS automatically keeps the old
+#   container running (it won't stop until the new one passes health checks).
+#   To manually rollback, re-deploy a previous image tag:
+#     aws ecs update-service --cluster CLUSTER --service SERVICE \
+#       --task-definition FAMILY:PREVIOUS_VERSION
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Only one deployment can run at a time.
+# If you push twice quickly, the second run waits for the first to finish.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # ── Re-run CI checks before deploying ─────────────────────────────────────
+  # Even though CI ran on this commit already, we run it again here to be safe.
+  # (GitHub doesn't guarantee CI ran successfully before the deploy trigger.)
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install "ruff>=0.4,<1"
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: requirements-dev.txt }
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests/unit/ -q
+        env:
+          OPENAI_API_KEY: "sk-fake-ci-key"
+
+  # ── Build and deploy ────────────────────────────────────────────────────────
+  deploy:
+    name: Build, push, and deploy to ECS
+    runs-on: ubuntu-latest
+    needs: [lint, test]  # only deploy if lint + test passed
+
+    # Required GitHub repository secrets (Settings → Secrets → Actions):
+    # ┌─────────────────────────────┬─────────────────────────────────────────┐
+    # │ Secret name                 │ Where to get the value                  │
+    # ├─────────────────────────────┼─────────────────────────────────────────┤
+    # │ AWS_ACCESS_KEY_ID           │ IAM user (deploy-only permissions)      │
+    # │ AWS_SECRET_ACCESS_KEY       │ IAM user                                │
+    # │ AWS_REGION                  │ e.g. us-east-1                          │
+    # │ ECR_REPOSITORY_URI          │ terraform output ecr_repository_uri     │
+    # │ ECS_CLUSTER_NAME            │ terraform output ecs_cluster_name       │
+    # │ ECS_SERVICE_NAME            │ terraform output ecs_service_name       │
+    # │ ECS_TASK_DEFINITION_FAMILY  │ terraform output ecs_task_definition_family │
+    # └─────────────────────────────┴─────────────────────────────────────────┘
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # ── AWS Authentication ─────────────────────────────────────────────────
+      # This action reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from
+      # GitHub secrets and configures the AWS CLI for all subsequent steps.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ── ECR Login ─────────────────────────────────────────────────────────
+      # Docker needs to authenticate with ECR before it can push.
+      # This action runs `aws ecr get-login-password` and calls `docker login`.
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Docker Build + Push ────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image to ECR
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
+            ${{ secrets.ECR_REPOSITORY_URI }}:latest
+          # Layer caching in ECR: stores the heavy Paddle layers in ECR.
+          # First build: ~20 min (downloads models). Subsequent builds: ~2-3 min.
+          # The `:buildcache` tag is a dedicated tag just for layer cache storage.
+          cache-from: type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache
+          cache-to:   type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache,mode=max
+
+      # ── ECS Deploy ────────────────────────────────────────────────────────
+      # We update the ECS task definition to use the new image tag,
+      # then tell the ECS service to use the new task definition.
+      # ECS handles rolling out the new container and draining the old one.
+      - name: Download current ECS task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ secrets.ECS_TASK_DEFINITION_FAMILY }} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Update task definition with new image tag
+        id: update-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: app
+          image: ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
+
+      - name: Deploy updated task definition to ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:        ${{ steps.update-task-def.outputs.task-definition }}
+          service:                ${{ secrets.ECS_SERVICE_NAME }}
+          cluster:                ${{ secrets.ECS_CLUSTER_NAME }}
+          # Wait until ECS reports the new task as healthy before marking
+          # this step as successful. If it fails, the old task stays running.
+          wait-for-service-stability: true
+
+      # ── Smoke Test ────────────────────────────────────────────────────────
+      # After ECS says the deployment is stable, call /health one more time
+      # from GitHub Actions to confirm external traffic reaches the container.
+      - name: Smoke test deployed service
+        run: |
+          ALB_URL=$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, 'rag-agent')].DNSName" \
+            --output text)
+
+          echo "Testing http://${ALB_URL}/health"
+          curl --fail --silent --show-error --retry 5 --retry-delay 10 \
+            "http://${ALB_URL}/health"
+
+          echo ""
+          echo "Deployment successful!"
