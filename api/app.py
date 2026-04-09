@@ -75,8 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="RAG Agent for PDF Reading",
         description=(
-            "Upload PDFs, preprocess them with OCR, build a vector index, "
-            "and ask questions against the indexed corpus."
+            "Upload PDFs, preprocess them with OCR, build a vector index, and ask questions against the indexed corpus."
         ),
         version="1.0.0",
         lifespan=lifespan,

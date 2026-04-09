@@ -150,9 +150,7 @@ def _synthesize_answer(
             "Cite chunk ids and page numbers in the answer."
         ),
         user_prompt=(
-            f"Question: {question}\n\n"
-            f"Retrieved evidence:\n{evidence_text}\n\n"
-            f"Specialist outputs:\n{specialist_text}"
+            f"Question: {question}\n\nRetrieved evidence:\n{evidence_text}\n\nSpecialist outputs:\n{specialist_text}"
         ),
     ).strip()
 
