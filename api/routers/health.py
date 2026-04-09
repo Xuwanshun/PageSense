@@ -19,6 +19,7 @@ request to a known path every 30 seconds.
     initialising (e.g. syncing artifacts from S3).
 
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Request

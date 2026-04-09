@@ -1,6 +1,7 @@
 """
 Query endpoint — ask a question against the indexed corpus.
 """
+
 from __future__ import annotations
 
 import logging
@@ -61,8 +62,10 @@ async def query(request: Request, body: QueryRequest) -> JSONResponse:
         logger.exception("Query failed: %r", body.question)
         raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
 
-    return JSONResponse({
-        "answer": response.answer,
-        "sources": response.sources,
-        "router": response.router,
-    })
+    return JSONResponse(
+        {
+            "answer": response.answer,
+            "sources": response.sources,
+            "router": response.router,
+        }
+    )

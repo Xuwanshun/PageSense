@@ -7,8 +7,7 @@ from document_Process.clients import request_openai_embeddings
 
 
 class EmbeddingBackend(Protocol):
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        ...
+    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class OpenAIEmbeddingBackend:

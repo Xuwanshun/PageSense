@@ -14,6 +14,7 @@ Covers:
 
 Nothing here touches Paddle, OpenAI, or the filesystem.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -39,8 +40,8 @@ from document_Process.services import (
     build_visual_summaries,
 )
 
-
 # ── Lightweight factory helpers ───────────────────────────────────────────────
+
 
 def _bbox(x0: float, y0: float, x1: float, y1: float) -> BoundingBox:
     return BoundingBox(x0=x0, y0=y0, x1=x1, y1=y1)
@@ -128,6 +129,7 @@ def _text_block(
 
 # ── BoundingBox tests ─────────────────────────────────────────────────────────
 
+
 class TestBoundingBox:
     def test_area_of_normal_box(self):
         assert _bbox(0, 0, 10, 20).area() == 200.0
@@ -182,6 +184,7 @@ class TestBoundingBox:
 
 
 # ── ReadingOrderService tests ─────────────────────────────────────────────────
+
 
 class TestReadingOrderKey:
     def test_top_item_sorts_before_bottom_item(self):
@@ -241,25 +244,29 @@ class TestReadingOrderService:
 
 # ── Region type label mapping ─────────────────────────────────────────────────
 
+
 class TestRegionTypeForLabel:
-    @pytest.mark.parametrize("label,expected", [
-        ("table", "table"),
-        ("borderless_table", "table"),
-        ("table_with_merged_cells", "table"),
-        ("figure", "figure"),
-        ("chart", "figure"),
-        ("image", "figure"),
-        ("graph", "figure"),
-        ("text", "text_block"),
-        ("title", "text_block"),
-        ("header", "text_block"),
-        ("footer", "text_block"),
-        ("caption", "text_block"),
-        ("reference", "text_block"),
-        ("aside_text", "text_block"),   # listed explicitly
-        ("custom_text", "text_block"),  # ends with _text
-        ("body_text", "text_block"),    # ends with _text
-    ])
+    @pytest.mark.parametrize(
+        "label,expected",
+        [
+            ("table", "table"),
+            ("borderless_table", "table"),
+            ("table_with_merged_cells", "table"),
+            ("figure", "figure"),
+            ("chart", "figure"),
+            ("image", "figure"),
+            ("graph", "figure"),
+            ("text", "text_block"),
+            ("title", "text_block"),
+            ("header", "text_block"),
+            ("footer", "text_block"),
+            ("caption", "text_block"),
+            ("reference", "text_block"),
+            ("aside_text", "text_block"),  # listed explicitly
+            ("custom_text", "text_block"),  # ends with _text
+            ("body_text", "text_block"),  # ends with _text
+        ],
+    )
     def test_known_labels(self, label: str, expected: str):
         assert _region_type_for_label(label) == expected
 
@@ -269,6 +276,7 @@ class TestRegionTypeForLabel:
 
 
 # ── _best_region_match tests ──────────────────────────────────────────────────
+
 
 class TestBestRegionMatch:
     def test_item_fully_inside_region_matched_with_ratio_1(self):
@@ -306,6 +314,7 @@ class TestBestRegionMatch:
 
 # ── _dedupe_regions tests ─────────────────────────────────────────────────────
 
+
 class TestDedupeRegions:
     def test_unique_regions_all_kept(self):
         r1 = _region("r1", "table", _bbox(0, 0, 100, 100))
@@ -337,6 +346,7 @@ class TestDedupeRegions:
 
 
 # ── _compute_crop_box tests ───────────────────────────────────────────────────
+
 
 class TestComputeCropBox:
     def test_table_crop_is_padded_outward(self):
@@ -387,6 +397,7 @@ class TestComputeCropBox:
 
 # ── build_visual_summaries tests ──────────────────────────────────────────────
 
+
 class TestBuildVisualSummaries:
     def test_table_region_produces_summary(self):
         region = _region("r1", "table", _bbox(0, 0, 100, 100))
@@ -408,7 +419,9 @@ class TestBuildVisualSummaries:
         table = _region("r1", "table", _bbox(0, 0, 100, 100))
         figure = _region("r2", "figure", _bbox(200, 0, 300, 100))
         text = _region("r3", "text_block", _bbox(400, 0, 500, 100))
-        summaries = build_visual_summaries(regions=[table, figure, text], ordered_blocks=[], chunks=[], cropped_assets=[])
+        summaries = build_visual_summaries(
+            regions=[table, figure, text], ordered_blocks=[], chunks=[], cropped_assets=[]
+        )
         assert len(summaries) == 2
         assert {s.region_id for s in summaries} == {"r1", "r2"}
 
@@ -458,42 +471,55 @@ class TestBuildVisualSummaries:
 
 # ── build_chunks tests ────────────────────────────────────────────────────────
 
+
 class TestBuildChunks:
     def test_single_block_yields_one_chunk(self):
         chunks = build_chunks(
-            document_id="doc", source_file="test.pdf",
-            ordered_blocks=[_text_block("b1", "Hello world")], regions=[],
+            document_id="doc",
+            source_file="test.pdf",
+            ordered_blocks=[_text_block("b1", "Hello world")],
+            regions=[],
         )
         assert len(chunks) == 1
 
     def test_chunk_text_contains_block_content(self):
         chunks = build_chunks(
-            document_id="doc", source_file="test.pdf",
-            ordered_blocks=[_text_block("b1", "The quick brown fox")], regions=[],
+            document_id="doc",
+            source_file="test.pdf",
+            ordered_blocks=[_text_block("b1", "The quick brown fox")],
+            regions=[],
         )
         assert "The quick brown fox" in chunks[0].text
 
     def test_chunk_id_prefixed_with_document_id(self):
         chunks = build_chunks(
-            document_id="mydoc", source_file="f.pdf",
-            ordered_blocks=[_text_block("b1", "text")], regions=[],
+            document_id="mydoc",
+            source_file="f.pdf",
+            ordered_blocks=[_text_block("b1", "text")],
+            regions=[],
         )
         assert chunks[0].chunk_id.startswith("mydoc:chunk:")
 
     def test_short_blocks_stay_in_one_chunk(self):
         blocks = [_text_block(f"b{i}", f"word {i}") for i in range(5)]
-        chunks = build_chunks(document_id="doc", source_file="f.pdf", ordered_blocks=blocks, regions=[], target_chars=1800)
+        chunks = build_chunks(
+            document_id="doc", source_file="f.pdf", ordered_blocks=blocks, regions=[], target_chars=1800
+        )
         assert len(chunks) == 1
 
     def test_long_blocks_split_into_multiple_chunks(self):
         blocks = [_text_block(f"b{i}", "A" * 600) for i in range(5)]
-        chunks = build_chunks(document_id="doc", source_file="f.pdf", ordered_blocks=blocks, regions=[], target_chars=1000)
+        chunks = build_chunks(
+            document_id="doc", source_file="f.pdf", ordered_blocks=blocks, regions=[], target_chars=1000
+        )
         assert len(chunks) > 1
 
     def test_chunk_page_number_set_from_block(self):
         chunks = build_chunks(
-            document_id="doc", source_file="f.pdf",
-            ordered_blocks=[_text_block("b1", "text", page_number=3)], regions=[],
+            document_id="doc",
+            source_file="f.pdf",
+            ordered_blocks=[_text_block("b1", "text", page_number=3)],
+            regions=[],
         )
         assert chunks[0].page_number == 3
 
@@ -531,13 +557,16 @@ class TestBuildChunks:
         sentinel = "SENTINEL_TEXT_FOR_OVERLAP"
         blocks = [
             _text_block("b1", "A" * 600),
-            _text_block("b2", sentinel),   # this is the last block of chunk 1
+            _text_block("b2", sentinel),  # this is the last block of chunk 1
             _text_block("b3", "B" * 600),  # triggers chunk split; b2 carried forward
         ]
         chunks = build_chunks(
-            document_id="doc", source_file="f.pdf",
-            ordered_blocks=blocks, regions=[],
-            target_chars=700, overlap_chars=len(sentinel) + 1,
+            document_id="doc",
+            source_file="f.pdf",
+            ordered_blocks=blocks,
+            regions=[],
+            target_chars=700,
+            overlap_chars=len(sentinel) + 1,
         )
         assert len(chunks) >= 2
         # The sentinel block should appear in the second chunk via overlap
@@ -546,6 +575,7 @@ class TestBuildChunks:
 
 
 # ── AssociationService tests ──────────────────────────────────────────────────
+
 
 class TestAssociationService:
     def _associate(self, items: list[OCRTextItem], regions: list[LayoutRegion], page: int = 1):

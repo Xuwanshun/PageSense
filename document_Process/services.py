@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -27,7 +27,6 @@ from document_Process.models import (
     RegionAssociation,
     VisualRegionSummary,
 )
-
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 TEXT_BLOCK_LABELS = {
@@ -207,7 +206,9 @@ class ReadingOrderService:
 
 
 class LayoutDetectionService:
-    def detect(self, pages: list[PageContext], ocr_pages: list[OCRPageResult]) -> tuple[list[LayoutRegion], list[ProcessingIssue], str]:
+    def detect(
+        self, pages: list[PageContext], ocr_pages: list[OCRPageResult]
+    ) -> tuple[list[LayoutRegion], list[ProcessingIssue], str]:
         del ocr_pages
         logger.info("Running Paddle layout detection on %s page(s)", len(pages))
         layout_detector = _get_paddle_layout_detector()
@@ -301,7 +302,9 @@ class AssociationService:
 
         for page_entry in reading_order.get("pages", []):
             page_number = int(page_entry["page_number"])
-            ordered_items = [item_lookup[item_id] for item_id in page_entry.get("ordered_item_ids", []) if item_id in item_lookup]
+            ordered_items = [
+                item_lookup[item_id] for item_id in page_entry.get("ordered_item_ids", []) if item_id in item_lookup
+            ]
             page_regions = regions_by_page.get(page_number, [])
             page_text_regions = text_regions_by_page.get(page_number, [])
             page_blocks: list[OrderedTextBlock] = []
@@ -337,7 +340,9 @@ class AssociationService:
                 global_index = _flush_block(page_number, current_items, global_index, page_blocks, ordered_blocks)
 
             if not page_blocks and ordered_items:
-                logger.warning("Page %s had OCR text but no Paddle text blocks; falling back to OCR line grouping", page_number)
+                logger.warning(
+                    "Page %s had OCR text but no Paddle text blocks; falling back to OCR line grouping", page_number
+                )
                 page_blocks = _build_fallback_blocks(page_number, ordered_items, global_index)
                 ordered_blocks.extend(page_blocks)
                 global_index += len(page_blocks)
@@ -345,7 +350,9 @@ class AssociationService:
                     for item_id in block.item_ids:
                         item_lookup[item_id].block_id = block.block_id
             else:
-                association_lookup = {assoc.item_id: assoc for assoc in associations if assoc.page_number == page_number}
+                association_lookup = {
+                    assoc.item_id: assoc for assoc in associations if assoc.page_number == page_number
+                }
                 for block in page_blocks:
                     for item_id in block.item_ids:
                         association_lookup[item_id].block_id = block.block_id
@@ -359,10 +366,14 @@ class AssociationService:
                 }
             )
 
-        return associations, ordered_blocks, {
-            "pages": page_payloads,
-            "full_text": "\n\n".join(page["text"] for page in page_payloads if page["text"]).strip(),
-        }
+        return (
+            associations,
+            ordered_blocks,
+            {
+                "pages": page_payloads,
+                "full_text": "\n\n".join(page["text"] for page in page_payloads if page["text"]).strip(),
+            },
+        )
 
 
 class CroppingService:
@@ -529,7 +540,7 @@ def build_document_artifacts(
         agent_output={},
     )
     metadata = ProcessingMetadata(
-        processing_timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        processing_timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         schema_version="6.0.0",
         ocr_engine="PaddleOCR",
         reading_order_model=reading_order_model,
@@ -559,11 +570,11 @@ def build_visual_summaries(
     for region in regions:
         if region.region_type not in {"table", "figure"}:
             continue
-        page_blocks = [block for block in ordered_blocks if block.page_number == region.page_number and block.bbox is not None]
+        page_blocks = [
+            block for block in ordered_blocks if block.page_number == region.page_number and block.bbox is not None
+        ]
         overlapping_blocks = [
-            block
-            for block in page_blocks
-            if block.bbox is not None and block.bbox.intersection_area(region.bbox) > 0
+            block for block in page_blocks if block.bbox is not None and block.bbox.intersection_area(region.bbox) > 0
         ]
         if not overlapping_blocks:
             overlapping_blocks = sorted(
@@ -576,7 +587,9 @@ def build_visual_summaries(
         region_chunks = chunks_by_region.get(region.region_id, [])
         block_text = " ".join(block.text for block in overlapping_blocks if block.text.strip()).strip()
         chunk_text = " ".join(chunk.text for chunk in region_chunks if chunk.text.strip()).strip()
-        summary_text = (block_text or chunk_text or f"Detected {region.region_type} region on page {region.page_number}.")[:1200]
+        summary_text = (
+            block_text or chunk_text or f"Detected {region.region_type} region on page {region.page_number}."
+        )[:1200]
         asset = asset_by_region.get(region.region_id)
         summaries.append(
             VisualRegionSummary(
@@ -654,7 +667,9 @@ def export_artifacts(
         },
     )
     _write_json(working_dir / "cropped_assets.json", [asset.model_dump(mode="json") for asset in cropped_assets])
-    _write_json(working_dir / "visual_summaries.json", [summary.model_dump(mode="json") for summary in visual_summaries])
+    _write_json(
+        working_dir / "visual_summaries.json", [summary.model_dump(mode="json") for summary in visual_summaries]
+    )
     _write_json(working_dir / "document.json", document.model_dump(mode="json"))
     _write_json(working_dir / "chunks.json", [chunk.model_dump(mode="json") for chunk in chunks])
     _write_json(working_dir / "metadata.json", metadata.model_dump(mode="json"))
@@ -799,7 +814,9 @@ def _flush_block(
     return global_index + 1
 
 
-def _build_fallback_blocks(page_number: int, ordered_items: list[OCRTextItem], start_index: int) -> list[OrderedTextBlock]:
+def _build_fallback_blocks(
+    page_number: int, ordered_items: list[OCRTextItem], start_index: int
+) -> list[OrderedTextBlock]:
     blocks: list[OrderedTextBlock] = []
     current_items: list[OCRTextItem] = []
     current_line_bucket: int | None = None
@@ -846,9 +863,19 @@ def _build_chunk(
     chunk_id = f"{document_id}:chunk:{index}"
     text = "\n\n".join(block.text for block in blocks if block.text.strip()).strip()
     region_ids = sorted({region_id for block in blocks for region_id in block.region_ids})
-    crop_refs = [regions_by_id[region_id].crop_path for region_id in region_ids if region_id in regions_by_id and regions_by_id[region_id].crop_path]
-    crop_asset_ids = [f"asset_{region_id}" for region_id in region_ids if region_id in regions_by_id and regions_by_id[region_id].crop_path]
-    region_types = sorted({regions_by_id[region_id].region_type for region_id in region_ids if region_id in regions_by_id})
+    crop_refs = [
+        regions_by_id[region_id].crop_path
+        for region_id in region_ids
+        if region_id in regions_by_id and regions_by_id[region_id].crop_path
+    ]
+    crop_asset_ids = [
+        f"asset_{region_id}"
+        for region_id in region_ids
+        if region_id in regions_by_id and regions_by_id[region_id].crop_path
+    ]
+    region_types = sorted(
+        {regions_by_id[region_id].region_type for region_id in region_ids if region_id in regions_by_id}
+    )
     bbox_refs = [block.bbox.as_list() for block in blocks if block.bbox is not None]
     item_ids = [item_id for block in blocks for item_id in block.item_ids]
     ordered_block_ids = [block.block_id for block in blocks]
@@ -921,14 +948,17 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _confidence_summary(*, ocr_pages: list[OCRPageResult], regions: list[LayoutRegion], chunks: list[ProcessedChunk]) -> dict[str, Any]:
+def _confidence_summary(
+    *, ocr_pages: list[OCRPageResult], regions: list[LayoutRegion], chunks: list[ProcessedChunk]
+) -> dict[str, Any]:
     ocr_confidences = [item.confidence for page in ocr_pages for item in page.items if item.confidence is not None]
     region_confidences = [region.confidence for region in regions if region.confidence is not None]
     return {
         "ocr_item_count": len(ocr_confidences),
         "ocr_average_confidence": round(sum(ocr_confidences) / len(ocr_confidences), 4) if ocr_confidences else None,
         "region_count": len(regions),
-        "region_average_confidence": round(sum(region_confidences) / len(region_confidences), 4) if region_confidences else None,
+        "region_average_confidence": round(sum(region_confidences) / len(region_confidences), 4)
+        if region_confidences
+        else None,
         "chunk_count": len(chunks),
     }
-

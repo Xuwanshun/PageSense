@@ -22,12 +22,13 @@ On startup (lifespan context):
 This means every time a new ECS container starts it automatically
 hydrates itself from S3 — no manual file copying required.
 """
+
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
@@ -57,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if resolved_settings.s3_bucket_name:
             from storage.s3 import sync_from_s3
+
             try:
                 logger.info("Syncing artifacts from S3 bucket: %s", resolved_settings.s3_bucket_name)
                 sync_from_s3(resolved_settings)

@@ -18,6 +18,7 @@ replace the OpenAI class with a fake that we control.
 This is called "mocking" — you replace a dependency with a controllable
 substitute for the duration of the test.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -93,9 +94,7 @@ def test_embeddings_rate_limit_raises_runtime_error():
 def test_embeddings_timeout_raises_runtime_error():
     """A timeout should become a RuntimeError with a clear message."""
     with patch("document_Process.clients.OpenAI") as mock_openai:
-        mock_openai.return_value.embeddings.create.side_effect = APITimeoutError(
-            request=MagicMock()
-        )
+        mock_openai.return_value.embeddings.create.side_effect = APITimeoutError(request=MagicMock())
         with pytest.raises(RuntimeError, match="timed out"):
             request_openai_embeddings(
                 model="text-embedding-3-small",
@@ -108,9 +107,7 @@ def test_embeddings_timeout_raises_runtime_error():
 def test_embeddings_connection_error_raises_runtime_error():
     """A network connection error should become a RuntimeError."""
     with patch("document_Process.clients.OpenAI") as mock_openai:
-        mock_openai.return_value.embeddings.create.side_effect = APIConnectionError(
-            request=MagicMock()
-        )
+        mock_openai.return_value.embeddings.create.side_effect = APIConnectionError(request=MagicMock())
         with pytest.raises(RuntimeError, match="connect"):
             request_openai_embeddings(
                 model="text-embedding-3-small",

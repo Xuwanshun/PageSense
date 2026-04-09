@@ -29,11 +29,9 @@ class QAResponse:
 
 
 class VectorStore(Protocol):
-    def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
-        ...
+    def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None: ...
 
-    def query(self, embedding: list[float], top_k: int) -> list[RetrievedChunk]:
-        ...
+    def query(self, embedding: list[float], top_k: int) -> list[RetrievedChunk]: ...
 
 
 class JsonVectorStore:
@@ -52,7 +50,7 @@ class JsonVectorStore:
 
     def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
         existing = {row["chunk_id"]: row for row in self._load_rows()}
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding in zip(chunks, embeddings, strict=False):
             existing[chunk.chunk_id] = {
                 "chunk_id": chunk.chunk_id,
                 "text": chunk.text,
@@ -113,7 +111,7 @@ class ChromaVectorStore:
                 metadata=metadata or {},
                 score=1.0 - float(distance),
             )
-            for chunk_id, text, metadata, distance in zip(ids, documents, metadatas, distances)
+            for chunk_id, text, metadata, distance in zip(ids, documents, metadatas, distances, strict=False)
         ]
 
 

@@ -34,6 +34,7 @@ questions users actually ask. Instead of "this is a bar chart", the model
 is instructed to mention the topic, specific values, trends, and conclusions
 — the things a user would type into a search box.
 """
+
 from __future__ import annotations
 
 import base64
@@ -69,8 +70,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "key data values, units of measurement, time periods covered, and any notable "
         "trends or conclusions visible in the data. "
         "Write in plain prose. Do not use markdown. "
-        "Focus on information users would search for. "
-        + _MEANINGLESS_INSTRUCTION
+        "Focus on information users would search for. " + _MEANINGLESS_INSTRUCTION
     ),
     "figure": (
         "You are a document analysis assistant preparing figure descriptions for a "
@@ -80,8 +80,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "units if visible, key data points or trends, and any conclusions the figure "
         "supports. "
         "Write in plain prose. Do not use markdown. "
-        "Focus on information users would search for. "
-        + _MEANINGLESS_INSTRUCTION
+        "Focus on information users would search for. " + _MEANINGLESS_INSTRUCTION
     ),
 }
 
@@ -169,18 +168,22 @@ def _describe_crop(
 
     # Only pass context when it is real text, not the placeholder fallback.
     if context_text and not context_text.startswith("Detected "):
-        user_content.append({
-            "type": "text",
-            "text": f"Surrounding document text for context:\n{context_text[:400]}",
-        })
+        user_content.append(
+            {
+                "type": "text",
+                "text": f"Surrounding document text for context:\n{context_text[:400]}",
+            }
+        )
 
-    user_content.append({
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:image/png;base64,{image_b64}",
-            "detail": "high",  # use high-detail mode for tables with small text
-        },
-    })
+    user_content.append(
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{image_b64}",
+                "detail": "high",  # use high-detail mode for tables with small text
+            },
+        }
+    )
 
     response = client.chat.completions.create(
         model=settings.vlm_model,

@@ -3,19 +3,19 @@ Unit tests for document_Process/vlm.py — VLM visual description enrichment.
 
 All OpenAI vision API calls are mocked. No real network calls, no API key needed.
 """
+
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from config import Settings
-from document_Process.models import BoundingBox, VisualRegionSummary
+from document_Process.models import VisualRegionSummary
 from document_Process.vlm import _describe_crop, enrich_summaries_with_vlm
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _settings(**overrides) -> Settings:
     base = dict(
@@ -55,6 +55,7 @@ def _fake_openai_response(text: str) -> MagicMock:
 
 # ── enrich_summaries_with_vlm tests ──────────────────────────────────────────
 
+
 class TestEnrichSummariesWithVlm:
     def test_summary_with_crop_gets_vlm_description(self, tmp_path):
         crop = tmp_path / "region_1.png"
@@ -62,7 +63,9 @@ class TestEnrichSummariesWithVlm:
 
         summaries = [_summary(crop_path=str(crop), summary_text="Detected table region on page 1.")]
 
-        with patch("document_Process.vlm._describe_crop", return_value=("Q1–Q4 revenue table showing 25% growth", True)) as mock_describe:
+        with patch(
+            "document_Process.vlm._describe_crop", return_value=("Q1–Q4 revenue table showing 25% growth", True)
+        ) as mock_describe:
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert len(result) == 1
@@ -141,7 +144,7 @@ class TestEnrichSummariesWithVlm:
 
         summaries = [
             _summary(region_id="r1", crop_path=str(crop)),  # has crop → enriched
-            _summary(region_id="r2", crop_path=None),       # no crop → kept as-is
+            _summary(region_id="r2", crop_path=None),  # no crop → kept as-is
         ]
 
         with patch("document_Process.vlm._describe_crop", return_value=("VLM text", True)):
@@ -206,6 +209,7 @@ class TestEnrichSummariesWithVlm:
 
 # ── _describe_crop tests ──────────────────────────────────────────────────────
 
+
 class TestDescribeCrop:
     def test_raises_when_no_api_key(self, tmp_path):
         crop = tmp_path / "crop.png"
@@ -248,6 +252,7 @@ class TestDescribeCrop:
 
     def test_image_sent_as_base64_data_url(self, tmp_path):
         import base64
+
         crop = tmp_path / "crop.png"
         image_bytes = b"FAKE_PNG_BYTES"
         crop.write_bytes(image_bytes)

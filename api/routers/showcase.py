@@ -4,6 +4,7 @@ Showcase endpoints — power the main web UI.
 GET  /api/showcase-data  → corpus stats, eval metrics, example questions
 POST /api/ask            → run QA pipeline and return answer + sources
 """
+
 from __future__ import annotations
 
 import json
@@ -102,26 +103,30 @@ def _corpus_previews(settings) -> list[dict]:
             chunk_count = len(chunks) if isinstance(chunks, list) else 0
             facts = f"{page_count} pages · {chunk_count} chunks" if page_count or chunk_count else ""
 
-            previews.append({
-                "document_id": doc_dir.name,
-                "source_filename": source_filename,
-                "title": title,
-                "description": description,
-                "facts": facts,
-            })
+            previews.append(
+                {
+                    "document_id": doc_dir.name,
+                    "source_filename": source_filename,
+                    "title": title,
+                    "description": description,
+                    "facts": facts,
+                }
+            )
         return previews
 
     # Fallback: show raw PDFs if preprocessing hasn't run yet
     raw_dir = PROJECT_ROOT / "Data" / "Raw"
     for pdf_path in sorted(raw_dir.glob("*.pdf")) if raw_dir.exists() else []:
         title, description = _document_blurb(pdf_path.name)
-        previews.append({
-            "document_id": None,
-            "source_filename": pdf_path.name,
-            "title": title,
-            "description": description,
-            "facts": "",
-        })
+        previews.append(
+            {
+                "document_id": None,
+                "source_filename": pdf_path.name,
+                "title": title,
+                "description": description,
+                "facts": "",
+            }
+        )
     return previews
 
 
@@ -163,9 +168,7 @@ async def showcase_data(request: Request) -> JSONResponse:
     latest_run = _latest_eval_run()
     summary = _load_json(latest_run / "summary.json") if latest_run else None
     llm_judge = (
-        _load_json(latest_run / "llm_judge.json")
-        if latest_run and (latest_run / "llm_judge.json").exists()
-        else None
+        _load_json(latest_run / "llm_judge.json") if latest_run and (latest_run / "llm_judge.json").exists() else None
     )
     predictions = _load_json(latest_run / "predictions.json") if latest_run else []
 
@@ -177,20 +180,22 @@ async def showcase_data(request: Request) -> JSONResponse:
         ocr_examples=examples.get("ocr_impact", []),
     )
 
-    return JSONResponse({
-        "latest_run": latest_run.name if latest_run else None,
-        "summary": summary,
-        "judge": llm_judge,
-        "prediction_examples": (predictions or [])[:3],
-        "ocr_impact": examples.get("ocr_impact", []),
-        "example_questions": example_questions,
-        "corpus_previews": corpus_previews,
-        "stats": {
-            "documents": docs,
-            "chunks": chunk_count,
-            "region_counts": region_counts,
-        },
-    })
+    return JSONResponse(
+        {
+            "latest_run": latest_run.name if latest_run else None,
+            "summary": summary,
+            "judge": llm_judge,
+            "prediction_examples": (predictions or [])[:3],
+            "ocr_impact": examples.get("ocr_impact", []),
+            "example_questions": example_questions,
+            "corpus_previews": corpus_previews,
+            "stats": {
+                "documents": docs,
+                "chunks": chunk_count,
+                "region_counts": region_counts,
+            },
+        }
+    )
 
 
 class AskRequest(BaseModel):
@@ -216,15 +221,17 @@ async def ask(request: Request, body: AskRequest) -> JSONResponse:
         logger.exception("Ask failed: %r", body.question)
         raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
 
-    return JSONResponse({
-        "question": response.question,
-        "answer": response.answer,
-        "sources": response.sources,
-        "router": response.router,
-        "specialists": [
-            {"agent_name": s.agent_name, "output": s.output, "region_ids": s.region_ids}
-            for s in response.specialists
-        ],
-        "latency_ms": int((time.time() - started) * 1000),
-        "top_k": body.top_k,
-    })
+    return JSONResponse(
+        {
+            "question": response.question,
+            "answer": response.answer,
+            "sources": response.sources,
+            "router": response.router,
+            "specialists": [
+                {"agent_name": s.agent_name, "output": s.output, "region_ids": s.region_ids}
+                for s in response.specialists
+            ],
+            "latency_ms": int((time.time() - started) * 1000),
+            "top_k": body.top_k,
+        }
+    )
