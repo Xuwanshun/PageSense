@@ -12,6 +12,8 @@ get poor retrieval quality (bad RAG answers) with no obvious error.
 """
 from __future__ import annotations
 
+import pytest
+
 from rag.chunk import ChunkRecord, chunk_record_from_processed_chunk, chunk_records_from_processed_chunks
 from document_Process.models import ProcessedChunk
 
@@ -107,6 +109,3 @@ def test_chunk_record_is_frozen():
     record = chunk_record_from_processed_chunk(chunk)
     with pytest.raises(Exception):  # AttributeError or FrozenInstanceError
         record.chunk_id = "mutated"  # type: ignore[misc]
-
-
-import pytest  # noqa: E402  (import at bottom to keep test functions clean)

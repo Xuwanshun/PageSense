@@ -167,7 +167,6 @@ def _download_prefix(*, bucket: str, prefix: str, local_dir: Path, region: str) 
     for page in pages:
         for obj in page.get("Contents", []):
             key: str = obj["Key"]
-            # Strip the prefix to get the relative path
             relative = key[len(prefix):]
             if not relative:
                 continue  # skip the prefix directory object itself

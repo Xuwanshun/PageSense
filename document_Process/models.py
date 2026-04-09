@@ -119,6 +119,7 @@ class VisualRegionSummary(BaseModel):
     linked_block_ids: list[str] = Field(default_factory=list)
     linked_chunk_ids: list[str] = Field(default_factory=list)
     summary_text: str
+    is_meaningful: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

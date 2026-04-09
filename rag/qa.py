@@ -161,7 +161,7 @@ def _load_visual_summaries(settings: Settings, retrieved: list[RetrievedChunk]) 
         if not path.exists():
             continue
         for item in _load_json(path) or []:
-            if isinstance(item, dict):
+            if isinstance(item, dict) and item.get("is_meaningful", True):
                 summaries[str(item["region_id"])] = item
     return summaries
 

@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     # "api"  → start the FastAPI server (python main.py --serve)
     app_mode: Literal["cli", "api"] = "cli"
 
+    # ── VLM visual summaries ──────────────────────────────────────────────────
+    # When enabled, each cropped table/figure is sent to the vision model and
+    # the returned description replaces the OCR-text fallback in
+    # visual_summaries.json. This is the recommended setting for production
+    # because figures and charts carry zero useful OCR text.
+    #
+    # Cost note: one API call per detected table/figure region per document.
+    # A 20-page report with 5 tables and 3 figures = 8 vision calls.
+    use_vlm_summaries: bool = False
+    vlm_model: str = "gpt-4o"
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).

@@ -92,6 +92,10 @@ class DocumentPreprocessingPipeline:
             cropped_assets=cropped_assets,
         )
 
+        if self.settings.use_vlm_summaries:
+            from document_Process.vlm import enrich_summaries_with_vlm
+            visual_summaries = enrich_summaries_with_vlm(visual_summaries, settings=self.settings)
+
         document, metadata = build_document_artifacts(
             loaded=loaded,
             ocr_pages=ocr_pages,

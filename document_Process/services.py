@@ -53,21 +53,11 @@ logger = logging.getLogger(__name__)
 
 def _configure_paddle_env(cache_dir: Path) -> None:
     """
-    Set environment variables that control where PaddleOCR/PaddleX store their
-    downloaded models and temporary files.
+    Set environment variables controlling where PaddleOCR/PaddleX store downloaded
+    models and temp files.
 
-    WHY this exists: PaddlePaddle reads these env vars before downloading any
-    model. If we don't set them, Paddle defaults to writing into the current
-    working directory (a `.paddlex/` folder), which:
-      - pollutes the project root on local machines
-      - writes into a read-only or wrong directory inside Docker containers
-
-    WHY it no longer runs at import time: The original code called this at
-    module level (`_configure_paddle_env()` on line 64), which meant it fired
-    as soon as any file imported `document_Process.services` — including in
-    unit tests that never touch Paddle. Explicit is better than implicit.
-    Now it is called once from DocumentLoaderService.__init__() when a real
-    document load is actually about to happen.
+    Without these, Paddle defaults to writing into the working directory, which
+    pollutes the project root locally and fails in read-only Docker containers.
     """
     cache_home = cache_dir.resolve()
     cache_home.mkdir(parents=True, exist_ok=True)
@@ -714,7 +704,6 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
 
 @lru_cache(maxsize=1)
 def _get_paddle_ocr() -> Any:
-    _configure_paddle_env()
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
@@ -728,7 +717,6 @@ def _get_paddle_ocr() -> Any:
 
 @lru_cache(maxsize=1)
 def _get_paddle_layout_detector() -> Any:
-    _configure_paddle_env()
     from paddleocr import LayoutDetection
 
     return LayoutDetection()

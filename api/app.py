@@ -39,18 +39,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """
-    Create and configure the FastAPI application.
-
-    Args:
-        settings: Optional Settings instance. If not provided, a new
-                  Settings() is constructed (reads from environment / .env).
-    """
     resolved_settings = settings or Settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # ── Startup ──────────────────────────────────────────────────────
         configure_logging(
             log_level=resolved_settings.log_level,
             log_format=resolved_settings.log_format,
@@ -59,9 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         ensure_data_dirs(resolved_settings)
 
-        # Pull latest artifacts from S3 if a bucket is configured.
-        # This is what makes the ECS container stateless: the filesystem
-        # is ephemeral but the important data lives in S3.
         if resolved_settings.s3_bucket_name:
             from storage.s3 import sync_from_s3
             try:
@@ -75,7 +64,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         logger.info("Server ready")
         yield
-        # ── Shutdown ─────────────────────────────────────────────────────
         logger.info("Server shutting down")
 
     app = FastAPI(
@@ -88,16 +76,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Make settings available to all request handlers via request.app.state.settings
     app.state.settings = resolved_settings
 
-    # Register routers (each router handles a group of related endpoints)
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(query.router)
 
-    # Global exception handler — turns unhandled RuntimeErrors into JSON 500
-    # responses instead of HTML error pages.
     @app.exception_handler(RuntimeError)
     async def runtime_error_handler(request, exc: RuntimeError) -> JSONResponse:
         logger.error("Unhandled error: %s", exc)
