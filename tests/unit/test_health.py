@@ -15,6 +15,7 @@ against it using the same requests-like interface:
 
 The app runs synchronously inside your test — no real ports are opened.
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

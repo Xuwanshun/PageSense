@@ -8,6 +8,7 @@ Supports two modes:
 The CLI mode is unchanged from the original design, so existing workflows
 continue to work without modification.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,20 +20,25 @@ from logging_config import configure_logging
 
 def main() -> None:
     settings = Settings()
-
-    # Configure logging before anything else so all subsequent log calls
-    # use the correct format and level. The original basicConfig(format="%(message)s")
-    # call dropped timestamps, levels, and module names — this replaces it.
     configure_logging(log_level=settings.log_level, log_format=settings.log_format)
 
-    parser = argparse.ArgumentParser(
-        description="PDF OCR + RAG pipeline: preprocess, index, and query PDF documents."
+    parser = argparse.ArgumentParser(description="PDF OCR + RAG pipeline: preprocess, index, and query PDF documents.")
+    parser.add_argument(
+        "--preprocess", action="store_true", help="OCR and preprocess PDFs in the raw documents directory."
     )
-    parser.add_argument("--preprocess", action="store_true", help="OCR and preprocess PDFs in the raw documents directory.")
-    parser.add_argument("--index", action="store_true", help="Build the vector index from preprocessed document artifacts.")
+    parser.add_argument(
+        "--index", action="store_true", help="Build the vector index from preprocessed document artifacts."
+    )
     parser.add_argument("--ask", type=str, metavar="QUESTION", help="Ask a question against the indexed corpus.")
-    parser.add_argument("--top-k", type=int, default=settings.default_top_k, help="Number of retrieved chunks to use for QA (default: %(default)s).")
-    parser.add_argument("--force-preprocess", action="store_true", help="Re-run preprocessing even if artifacts already exist.")
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=settings.default_top_k,
+        help="Number of retrieved chunks to use for QA (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--force-preprocess", action="store_true", help="Re-run preprocessing even if artifacts already exist."
+    )
     parser.add_argument(
         "--serve",
         action="store_true",
@@ -40,8 +46,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Decide whether to start as an HTTP server.
-    # This can be triggered either by --serve flag or by APP_MODE=api in the environment.
     if args.serve or settings.app_mode == "api":
         _run_server(settings)
         return
@@ -49,8 +53,6 @@ def main() -> None:
     if not args.preprocess and not args.index and not args.ask:
         parser.error("Specify at least one of: --preprocess, --index, --ask, --serve")
 
-    # Ensure data directories exist before any file operations.
-    # (Moved out of Settings.__post_init__ so Settings is safe to construct in tests.)
     ensure_data_dirs(settings)
 
     if args.preprocess:

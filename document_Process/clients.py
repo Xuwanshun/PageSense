@@ -10,6 +10,7 @@ pipeline with a raw openai exception — no helpful message, no context.
 Now every OpenAI call is wrapped to catch the most common failure modes
 and re-raise them as RuntimeError with a clear, actionable message.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,9 +57,7 @@ class OpenAIJSONModelClient:
         except APIConnectionError as exc:
             raise RuntimeError(f"Could not connect to OpenAI API: {exc}") from exc
         except APIStatusError as exc:
-            raise RuntimeError(
-                f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}"
-            ) from exc
+            raise RuntimeError(f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}") from exc
 
         content = str((response.choices[0].message.content or "").strip())
         return _validate_response_model(response_model, _extract_json_from_text(content))
@@ -82,19 +81,14 @@ class OpenAIJSONModelClient:
         except APIConnectionError as exc:
             raise RuntimeError(f"Could not connect to OpenAI API: {exc}") from exc
         except APIStatusError as exc:
-            raise RuntimeError(
-                f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}"
-            ) from exc
+            raise RuntimeError(f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}") from exc
 
         return str(response.choices[0].message.content or "")
 
 
 def build_openai_client(settings: Settings) -> OpenAIJSONModelClient:
     if not settings.openai_api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. "
-            "Add it to your .env file or set it as an environment variable."
-        )
+        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env file or set it as an environment variable.")
     return OpenAIJSONModelClient(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
@@ -132,7 +126,7 @@ def _extract_json_from_text(content: str) -> dict[str, Any]:
         end = cleaned.rfind("}")
         if start >= 0 and end > start:
             return json.loads(cleaned[start : end + 1])
-        raise RuntimeError("OpenAI model did not return valid JSON.")
+        raise RuntimeError("OpenAI model did not return valid JSON.") from None
 
 
 def _validate_response_model(response_model: type[ModelT], payload: dict[str, Any]) -> ModelT:

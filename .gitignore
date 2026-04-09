@@ -46,9 +46,12 @@ Data/
 htmlcov/
 coverage.xml
 
+doc_pro_test
+
 # ── IDE and OS ────────────────────────────────────────────────────────────────
 .DS_Store
 .idea/
 .vscode/
 *.swp
 infra/.terraform/
+.claude

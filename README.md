@@ -61,6 +61,50 @@ Ask a question against the frozen index and artifacts:
 python main.py --ask "What is the goal of the AI RMF?"
 ```
 
+## AWS Deployment
+
+```
+Internet
+    │  HTTP :80
+    ▼
+┌─────────────────┐
+│   ALB            │  Application Load Balancer — public entry point
+│  (alb.tf)        │  Routes to healthy ECS tasks, health-checks /health
+└────────┬────────┘
+         │ HTTP :8000 (only from ALB)
+         ▼
+┌─────────────────┐
+│  ECS Fargate     │  Runs your Docker container (serverless — no EC2 to manage)
+│  (ecs.tf)        │  2 vCPU / 8 GB RAM per task
+│                  │
+│  env vars:       │  APP_MODE=api → starts FastAPI on port 8000
+│  S3_BUCKET_NAME ─┼──────────────────────────────────────┐
+│  OPENAI_API_KEY ◄┼── from Secrets Manager               │
+│                  │                                       │
+│  /app/paddle_models ◄── EFS mount                       │
+└──────────────────┘                                       │
+         │                                                 │
+         ▼                                                 ▼
+┌────────────────┐                              ┌─────────────────────┐
+│  EFS            │                              │  S3                 │
+│  (efs.tf)       │                              │                     │
+│  Paddle models  │                              │  processed/         │
+│  ~1.5 GB        │                              │  embedded/          │
+│  persists across│                              │  (vector store)     │
+│  deploys        │                              └─────────────────────┘
+└────────────────┘
+```
+
+| Service | Purpose |
+|---|---|
+| **S3** | Persists processed artifacts and vector store across container restarts |
+| **EFS** | Persists Paddle model cache (~1.5 GB) so models are not re-downloaded on every deploy |
+| **ECR** | Private Docker image registry — ECS pulls the image from here |
+| **ALB** | Public internet entry point, routes traffic to healthy containers |
+| **Secrets Manager** | Injects `OPENAI_API_KEY` into the container at startup — never stored in the image |
+
+The container filesystem is ephemeral. On every startup, `sync_from_s3()` pulls the latest processed artifacts and vector store from S3 to local disk. After preprocessing or indexing, the app pushes results back to S3. Set `S3_BUCKET_NAME` to enable; leave it empty for local development (no-op).
+
 ## Detection Notes
 
 The preprocessing pipeline uses:

@@ -35,15 +35,21 @@ def answer_question_from_frozen_artifacts(
 ) -> MultiAgentQAResponse:
     resolved_settings = settings or Settings()
     retriever = DocumentRetriever(resolved_settings)
-    retrieved = _rerank_chunks(question, retriever.retrieve(question, top_k=(top_k or resolved_settings.default_top_k) * 2))
+    retrieved = _rerank_chunks(
+        question, retriever.retrieve(question, top_k=(top_k or resolved_settings.default_top_k) * 2)
+    )
     retrieved = retrieved[: top_k or resolved_settings.default_top_k]
     visual_summaries = _load_visual_summaries(resolved_settings, retrieved)
     router = _route_question(question, retrieved, visual_summaries)
     specialists: list[SpecialistResult] = []
     if router["use_table_agent"] and router["table_regions"]:
-        specialists.append(_run_specialist("table", question, router["table_regions"], visual_summaries, resolved_settings))
+        specialists.append(
+            _run_specialist("table", question, router["table_regions"], visual_summaries, resolved_settings)
+        )
     if router["use_figure_agent"] and router["figure_regions"]:
-        specialists.append(_run_specialist("figure", question, router["figure_regions"], visual_summaries, resolved_settings))
+        specialists.append(
+            _run_specialist("figure", question, router["figure_regions"], visual_summaries, resolved_settings)
+        )
     answer = _synthesize_answer(question, retrieved, specialists, resolved_settings)
     return MultiAgentQAResponse(
         question=question,
@@ -86,7 +92,8 @@ def _route_question(
     figure_regions = [region_id for region_id in region_ids if visual_summaries[region_id]["region_type"] == "figure"]
     return {
         "use_table_agent": bool(table_regions) and any(term in lowered for term in ("table", "row", "column")),
-        "use_figure_agent": bool(figure_regions) and any(term in lowered for term in ("figure", "chart", "image", "diagram", "shown")),
+        "use_figure_agent": bool(figure_regions)
+        and any(term in lowered for term in ("figure", "chart", "image", "diagram", "shown")),
         "table_regions": table_regions,
         "figure_regions": figure_regions,
     }
@@ -132,8 +139,7 @@ def _synthesize_answer(
             f"regions={chunk.metadata.get('source_region_ids') or chunk.metadata.get('region_ids', [])}]\n{chunk.text}"
         )
     specialist_sections = [
-        f"[{item.agent_name} agent regions={item.region_ids}]\n{item.output}"
-        for item in specialists
+        f"[{item.agent_name} agent regions={item.region_ids}]\n{item.output}" for item in specialists
     ]
     evidence_text = "\n\n".join(sources)
     specialist_text = "\n\n".join(specialist_sections) if specialist_sections else "None"
@@ -144,9 +150,7 @@ def _synthesize_answer(
             "Cite chunk ids and page numbers in the answer."
         ),
         user_prompt=(
-            f"Question: {question}\n\n"
-            f"Retrieved evidence:\n{evidence_text}\n\n"
-            f"Specialist outputs:\n{specialist_text}"
+            f"Question: {question}\n\nRetrieved evidence:\n{evidence_text}\n\nSpecialist outputs:\n{specialist_text}"
         ),
     ).strip()
 
@@ -161,7 +165,7 @@ def _load_visual_summaries(settings: Settings, retrieved: list[RetrievedChunk]) 
         if not path.exists():
             continue
         for item in _load_json(path) or []:
-            if isinstance(item, dict):
+            if isinstance(item, dict) and item.get("is_meaningful", True):
                 summaries[str(item["region_id"])] = item
     return summaries
 

@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 RegionType = Literal["text_block", "table", "figure"]
 
 
@@ -20,7 +19,7 @@ class BoundingBox(BaseModel):
     def area(self) -> float:
         return max(0.0, self.x1 - self.x0) * max(0.0, self.y1 - self.y0)
 
-    def intersection_area(self, other: "BoundingBox") -> float:
+    def intersection_area(self, other: BoundingBox) -> float:
         overlap_x0 = max(self.x0, other.x0)
         overlap_y0 = max(self.y0, other.y0)
         overlap_x1 = min(self.x1, other.x1)
@@ -33,11 +32,11 @@ class BoundingBox(BaseModel):
         return self.x1 > self.x0 and self.y1 > self.y0
 
     @classmethod
-    def from_list(cls, values: list[float]) -> "BoundingBox":
+    def from_list(cls, values: list[float]) -> BoundingBox:
         return cls(x0=float(values[0]), y0=float(values[1]), x1=float(values[2]), y1=float(values[3]))
 
     @classmethod
-    def merge(cls, boxes: list["BoundingBox"]) -> "BoundingBox | None":
+    def merge(cls, boxes: list[BoundingBox]) -> BoundingBox | None:
         if not boxes:
             return None
         return cls(
@@ -119,6 +118,7 @@ class VisualRegionSummary(BaseModel):
     linked_block_ids: list[str] = Field(default_factory=list)
     linked_chunk_ids: list[str] = Field(default_factory=list)
     summary_text: str
+    is_meaningful: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

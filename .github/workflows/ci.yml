@@ -44,7 +44,7 @@ jobs:
 
       - name: Install ruff
         # Install only ruff (not the full requirements) for speed.
-        run: pip install "ruff>=0.4,<1"
+        run: pip install "ruff==0.15.9"
 
       - name: Run ruff linter
         # ruff check: finds bugs and style issues

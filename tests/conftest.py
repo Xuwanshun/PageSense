@@ -16,6 +16,7 @@ as a parameter to a test function:
 
 pytest handles creating and cleaning up the fixture for each test.
 """
+
 from __future__ import annotations
 
 import pytest

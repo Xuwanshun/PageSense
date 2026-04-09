@@ -7,8 +7,7 @@ from document_Process.clients import request_openai_embeddings
 
 
 class EmbeddingBackend(Protocol):
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        ...
+    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class OpenAIEmbeddingBackend:
@@ -33,6 +32,6 @@ def build_embedding_backend(settings: Settings) -> EmbeddingBackend:
         raise RuntimeError("OPENAI_API_KEY is required for embeddings and retrieval.")
     return OpenAIEmbeddingBackend(
         settings.embedding_model,
-        api_key=settings.openai_api_key or "",
+        api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
     )

@@ -40,6 +40,7 @@ automatically via the instance metadata service.
 Locally, boto3 uses your ~/.aws/credentials file or the standard
 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.
 """
+
 from __future__ import annotations
 
 import logging
@@ -110,6 +111,7 @@ def sync_embedded_to_s3(settings: Settings) -> None:
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
+
 def _get_client(region: str):
     """Return a boto3 S3 client. boto3 auto-discovers credentials from:
     1. Environment variables (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
@@ -117,6 +119,7 @@ def _get_client(region: str):
     3. ECS Task Role (production — no credentials needed in the container)
     """
     import boto3  # imported here so the rest of the app doesn't require boto3
+
     return boto3.client("s3", region_name=region)
 
 
@@ -167,8 +170,7 @@ def _download_prefix(*, bucket: str, prefix: str, local_dir: Path, region: str) 
     for page in pages:
         for obj in page.get("Contents", []):
             key: str = obj["Key"]
-            # Strip the prefix to get the relative path
-            relative = key[len(prefix):]
+            relative = key[len(prefix) :]
             if not relative:
                 continue  # skip the prefix directory object itself
 
