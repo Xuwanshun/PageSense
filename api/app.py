@@ -26,14 +26,18 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from api.routers import documents, health, query
+from api.routers import documents, health, query, showcase
 from config import Settings, ensure_data_dirs
 from logging_config import configure_logging
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(query.router)
+    app.include_router(showcase.router)
+
+    # Serve the main UI at /
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return FileResponse(STATIC_DIR / "index.html")
+
+    # Mount static assets (CSS, JS, etc.) — must come after route definitions
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # Global exception handler — turns unhandled RuntimeErrors into JSON 500
     # responses instead of HTML error pages.
