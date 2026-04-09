@@ -4,6 +4,7 @@ Document management endpoints.
 PDF preprocessing (30-120s) is handled synchronously — the HTTP request
 blocks until the pipeline finishes. The connection must remain open.
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,18 +58,21 @@ async def preprocess(request: Request, file: UploadFile) -> JSONResponse:
 
     if settings.s3_bucket_name:
         from storage.s3 import sync_processed_to_s3
+
         try:
             sync_processed_to_s3(settings)
         except Exception as exc:
             # S3 sync failure is not fatal — artifacts are still on local disk.
             logger.warning("S3 sync after preprocess failed: %s", exc)
 
-    return JSONResponse({
-        "document_id": result.document_id,
-        "chunk_count": result.chunk_count,
-        "page_count": result.page_count,
-        "warnings": [w.model_dump() for w in result.warnings],
-    })
+    return JSONResponse(
+        {
+            "document_id": result.document_id,
+            "chunk_count": result.chunk_count,
+            "page_count": result.page_count,
+            "warnings": [w.model_dump() for w in result.warnings],
+        }
+    )
 
 
 @router.post("/index")
@@ -105,13 +109,16 @@ async def build_index(request: Request) -> JSONResponse:
 
     if settings.s3_bucket_name:
         from storage.s3 import sync_embedded_to_s3
+
         try:
             sync_embedded_to_s3(settings)
         except Exception as exc:
             logger.warning("S3 sync after index failed: %s", exc)
 
-    return JSONResponse({
-        "indexed_documents": len(indexed),
-        "total_chunks": total_chunks,
-        "documents": indexed,
-    })
+    return JSONResponse(
+        {
+            "indexed_documents": len(indexed),
+            "total_chunks": total_chunks,
+            "documents": indexed,
+        }
+    )

@@ -55,4 +55,3 @@ doc_pro_test
 *.swp
 infra/.terraform/
 .claude
-CLAUDE.md

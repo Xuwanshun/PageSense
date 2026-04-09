@@ -10,12 +10,13 @@ The ChunkRecord is the unit that gets embedded and stored in the vector
 index. If fields are dropped, misnamed, or metadata is wrong, you will
 get poor retrieval quality (bad RAG answers) with no obvious error.
 """
+
 from __future__ import annotations
 
 import pytest
 
-from rag.chunk import ChunkRecord, chunk_record_from_processed_chunk, chunk_records_from_processed_chunks
 from document_Process.models import ProcessedChunk
+from rag.chunk import chunk_record_from_processed_chunk, chunk_records_from_processed_chunks
 
 
 def _make_chunk(
@@ -107,5 +108,5 @@ def test_chunk_record_is_frozen():
     """ChunkRecord is a frozen dataclass — it should not be mutable."""
     chunk = _make_chunk()
     record = chunk_record_from_processed_chunk(chunk)
-    with pytest.raises(Exception):  # AttributeError or FrozenInstanceError
+    with pytest.raises((AttributeError, TypeError)):
         record.chunk_id = "mutated"  # type: ignore[misc]

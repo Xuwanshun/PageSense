@@ -8,6 +8,7 @@ on first use.
 Called from Dockerfile:
     RUN python scripts/download_models.py
 """
+
 import os
 import sys
 
@@ -19,6 +20,7 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 print("Downloading PaddleOCR models...")
 try:
     from paddleocr import PaddleOCR
+
     PaddleOCR(use_gpu=False, show_log=False)
     print("PaddleOCR models ready.")
 except Exception as exc:
@@ -27,6 +29,7 @@ except Exception as exc:
 print("Downloading PaddleX layout detection models...")
 try:
     from paddlex import create_pipeline
+
     create_pipeline(pipeline="PP-DocLayout_plus-L")
     print("PaddleX layout models ready.")
 except Exception as exc:

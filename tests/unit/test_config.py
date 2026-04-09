@@ -13,12 +13,10 @@ Configuration bugs are silent and dangerous. A misconfigured container
 pointing at the wrong S3 bucket or reading from the wrong directory will
 fail in production — often at the worst moment. These tests catch that.
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
-
-import pytest
 
 from config import Settings, ensure_data_dirs
 

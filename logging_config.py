@@ -31,6 +31,7 @@ PaddlePaddle prints a lot at DEBUG/INFO level (model loading progress,
 inference timings, etc.). We silence those loggers to WARNING so they
 do not drown out application logs.
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,8 +65,7 @@ def configure_logging(log_level: str = "INFO", log_format: str = "text") -> None
             # python-json-logger not installed — fall back to text and warn.
             formatter = _text_formatter()
             logging.warning(
-                "python-json-logger is not installed. "
-                "Set LOG_FORMAT=text or run: pip install python-json-logger"
+                "python-json-logger is not installed. Set LOG_FORMAT=text or run: pip install python-json-logger"
             )
     else:
         formatter = _text_formatter()

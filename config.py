@@ -15,6 +15,7 @@ To override a value locally, either:
     - Add it to your .env file: OPENAI_API_KEY=sk-...
     - Pass it directly in tests: Settings(openai_api_key="fake-key")
 """
+
 from __future__ import annotations
 
 from pathlib import Path

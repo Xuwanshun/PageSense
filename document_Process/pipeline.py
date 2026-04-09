@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from config import Settings
@@ -20,8 +20,9 @@ from document_Process.services import (
     export_artifacts,
 )
 
-
 logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class PreprocessingResult:
     document_id: str
@@ -94,6 +95,7 @@ class DocumentPreprocessingPipeline:
 
         if self.settings.use_vlm_summaries:
             from document_Process.vlm import enrich_summaries_with_vlm
+
             visual_summaries = enrich_summaries_with_vlm(visual_summaries, settings=self.settings)
 
         document, metadata = build_document_artifacts(
