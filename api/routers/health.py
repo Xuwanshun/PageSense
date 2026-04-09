@@ -18,8 +18,6 @@ request to a known path every 30 seconds.
     exist. Used to delay sending traffic to a container that is still
     initialising (e.g. syncing artifacts from S3).
 
-Mental model: Think of /health as "am I awake?" and /ready as "am I
-dressed and ready to work?"
 """
 from __future__ import annotations
 
@@ -28,7 +26,6 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["health"])
 
-# Application version — bump this in your CI/CD pipeline when deploying.
 APP_VERSION = "1.0.0"
 
 

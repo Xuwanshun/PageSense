@@ -79,9 +79,7 @@ def configure_logging(log_level: str = "INFO", log_format: str = "text") -> None
     root.handlers.clear()
     root.addHandler(handler)
 
-    # Silence noisy third-party loggers.
-    # Paddle prints model-loading progress bars and inference stats at INFO;
-    # these are not useful in application logs.
+    # Paddle and PIL print model-loading progress at INFO; silence to WARNING.
     for noisy in ("ppdet", "paddle", "paddleocr", "paddlex", "PIL", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
