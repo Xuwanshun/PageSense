@@ -9,6 +9,7 @@ from typing import Any
 from config import Settings
 from document_Process.clients import build_openai_client
 from rag.query_enhancement import classify_query, decompose_query, hyde_enhance
+from rag.rerank import LLMReranker
 from rag.retrieve import DocumentRetriever, RetrievedChunk
 
 
@@ -94,9 +95,18 @@ def answer_question_from_frozen_artifacts(
     else:
         raw_chunks = retriever.retrieve(question, top_k=fetch_k, doc_filter=doc_filter)
 
-    retrieved = _rerank_chunks(question, raw_chunks)
-    retrieved = retrieved[: top_k or resolved_settings.default_top_k]
-    visual_summaries = _load_visual_summaries(resolved_settings, retrieved)
+    # First-pass lightweight rerank (token overlap boost)
+    raw_chunks = _rerank_chunks(question, raw_chunks)
+    raw_chunks = raw_chunks[: top_k or resolved_settings.default_top_k]
+
+    # Second-pass LLM rerank (precision filter) — loads visual summaries first
+    # so table/figure descriptions are available to the reranker
+    visual_summaries = _load_visual_summaries(resolved_settings, raw_chunks)
+    if resolved_settings.use_llm_reranker:
+        reranker = LLMReranker(resolved_settings)
+        retrieved = reranker.rerank(question, raw_chunks, visual_summaries=visual_summaries)
+    else:
+        retrieved = raw_chunks
     router = _route_question(question, retrieved, visual_summaries)
     specialists: list[SpecialistResult] = []
     if router["use_table_agent"] and router["table_regions"]:

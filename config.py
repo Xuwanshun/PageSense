@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     # parent-context expansion.  Set USE_HYBRID_RETRIEVAL=true to activate.
     use_hybrid_retrieval: bool = False
 
+    # ── LLM reranker ──────────────────────────────────────────────────────────
+    # When enabled, retrieved chunks are re-scored by the LLM in a single batch
+    # call before being passed to the answer synthesiser.  Chunks scoring below
+    # 0.3 are dropped entirely.  Set USE_LLM_RERANKER=true to activate.
+    # Adds one LLM API call per query; disable in tests.
+    use_llm_reranker: bool = False
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).
