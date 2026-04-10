@@ -38,22 +38,22 @@ FROM python:3.11-slim AS base
 #   libgomp1  — OpenMP, required by PaddlePaddle for parallel CPU inference.
 #   curl      — used by the Docker HEALTHCHECK (GET /health).
 #
-# WHY so few packages compared to typical OpenCV setups:
-#   On Debian Trixie (python:3.11-slim), installing libgl1 triggers a full
-#   Mesa + LLVM graphics stack — libllvm19 alone is 23 MB and LLVM's
-#   post-install scripts are memory-intensive enough to OOM-kill Docker builds
-#   on machines with constrained memory (Docker Desktop on MacBook Air).
+# WHY libgl1 is included:
+#   Even though we use opencv-python-headless, PaddleOCR/PaddleX transitively
+#   loads libGL.so.1 at runtime (likely through paddlepaddle's inference engine).
+#   Without libgl1, preprocessing fails with:
+#     "libGL.so.1: cannot open shared object file: No such file or directory"
 #
-#   We avoid libgl1 entirely by using opencv-python-headless (installed via
-#   pip in Stage 2). The headless variant ships without OpenGL/X11 support,
-#   which is exactly what we need — PaddleOCR never opens a window, it only
-#   processes images in memory.
+#   libgl1 is installed here rather than the full libgl1-mesa-glx to keep the
+#   image small. The OOM concern during local Docker Desktop builds is not
+#   relevant since CI (GitHub Actions) builds the production image.
 #
-#   libglib2.0-0, libsm6, libxrender1, libxext6 are only needed when OpenCV
-#   opens a display window (cv2.imshow / cv2.waitKey). We never call those.
+#   libglib2.0-0 is required by libGL on Debian slim images (provides libgthread).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     curl \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory inside the container.
