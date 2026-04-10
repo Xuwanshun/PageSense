@@ -57,12 +57,32 @@ def answer_question_from_frozen_artifacts(
         doc_filter = matched_docs
 
     fetch_k = (top_k or resolved_settings.default_top_k) * 2
-    if resolved_settings.use_query_enhancement:
+
+    if resolved_settings.use_hybrid_retrieval:
+        # Hybrid path: BM25 + dense fusion with RRF, region boost, parent expansion.
+        # Query enhancement (HyDE / decomposition) still applies to the dense leg
+        # so we run it first to get the best query text, then delegate to
+        # hybrid_retrieve which handles both legs internally.
+        if resolved_settings.use_query_enhancement:
+            query_type = classify_query(question, resolved_settings)
+            effective_query = (
+                decompose_query(question, resolved_settings)[0]
+                if query_type == "complex"
+                else hyde_enhance(question, resolved_settings)
+            )
+        else:
+            effective_query = question
+        raw_chunks = retriever.hybrid_retrieve(
+            effective_query,
+            top_k=fetch_k,
+            doc_filter=doc_filter,
+        )
+    elif resolved_settings.use_query_enhancement:
         query_type = classify_query(question, resolved_settings)
         if query_type == "complex":
             sub_queries = decompose_query(question, resolved_settings)
             seen_ids: set[str] = set()
-            raw_chunks: list[RetrievedChunk] = []
+            raw_chunks = []
             for sub_q in sub_queries:
                 for chunk in retriever.retrieve(sub_q, top_k=fetch_k, doc_filter=doc_filter):
                     if chunk.chunk_id not in seen_ids:

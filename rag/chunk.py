@@ -7,6 +7,14 @@ from document_process.models import ProcessedChunk
 
 
 @dataclass(frozen=True)
+class RetrievedChunk:
+    chunk_id: str
+    text: str
+    metadata: dict[str, Any]
+    score: float
+
+
+@dataclass(frozen=True)
 class ChunkRecord:
     """A vector-store ready record derived from a processed chunk."""
 

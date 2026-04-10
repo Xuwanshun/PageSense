@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     # retrieval. Disable in tests to avoid extra LLM calls.
     use_query_enhancement: bool = True
 
+    # ── Hybrid retrieval ──────────────────────────────────────────────────────
+    # When enabled, retrieval fuses dense vector search with BM25 sparse search
+    # via Reciprocal Rank Fusion (RRF), then applies region-type boosting and
+    # parent-context expansion.  Set USE_HYBRID_RETRIEVAL=true to activate.
+    use_hybrid_retrieval: bool = False
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).
