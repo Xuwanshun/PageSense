@@ -129,6 +129,24 @@ class Settings(BaseSettings):
     # Adds one LLM API call per query; disable in tests.
     use_llm_reranker: bool = False
 
+    # ── Context compression ───────────────────────────────────────────────────
+    # When enabled, retrieved passages are compressed by the LLM before being
+    # fed to the synthesis agent.  OCR artifacts, boilerplate, and sentences
+    # that do not bear on the query are removed.  Target: ≥40% token reduction.
+    # Adds one LLM API call per query; disable in tests.
+    use_context_compression: bool = False
+    # Passages whose rerank score falls below this threshold AND that contain no
+    # unique information not found in higher-scoring passages are dropped entirely
+    # during compression.
+    compression_threshold: float = 0.5
+
+    # ── Faithfulness check ────────────────────────────────────────────────────
+    # When enabled, the generated answer is verified claim-by-claim against the
+    # retrieved source passages.  Answers with UNSUPPORTED or INFERRED claims
+    # are automatically rewritten to remove or hedge those claims.
+    # Adds two LLM API calls per query when issues are found; disable in tests.
+    use_faithfulness_check: bool = False
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).

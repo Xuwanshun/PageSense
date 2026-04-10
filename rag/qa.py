@@ -8,6 +8,8 @@ from typing import Any
 
 from config import Settings
 from document_Process.clients import build_openai_client
+from rag.compress import ContextCompressor
+from rag.faithfulness import FaithfulnessChecker
 from rag.query_enhancement import classify_query, decompose_query, hyde_enhance
 from rag.rerank import LLMReranker
 from rag.retrieve import DocumentRetriever, RetrievedChunk
@@ -117,7 +119,26 @@ def answer_question_from_frozen_artifacts(
         specialists.append(
             _run_specialist("figure", question, router["figure_regions"], visual_summaries, resolved_settings)
         )
-    answer = _synthesize_answer(question, retrieved, specialists, resolved_settings)
+    # Optional context compression — reduces token usage for synthesis
+    compressed_context: str | None = None
+    if resolved_settings.use_context_compression:
+        compressor = ContextCompressor(resolved_settings)
+        compressed_context = compressor.compress(
+            question,
+            retrieved,
+            visual_summaries=visual_summaries,
+            compression_threshold=resolved_settings.compression_threshold,
+        )
+
+    answer = _synthesize_answer(question, retrieved, specialists, resolved_settings, compressed_context)
+
+    # Optional faithfulness check — verifies and corrects unsupported claims
+    if resolved_settings.use_faithfulness_check:
+        checker = FaithfulnessChecker(resolved_settings)
+        faith_result = checker.check(question, retrieved, answer)
+        if faith_result.recommended_action != "return_as_is":
+            answer = checker.correct(question, answer, faith_result, retrieved)
+
     return MultiAgentQAResponse(
         question=question,
         answer=answer,
@@ -197,18 +218,22 @@ def _synthesize_answer(
     retrieved: list[RetrievedChunk],
     specialists: list[SpecialistResult],
     settings: Settings,
+    compressed_context: str | None = None,
 ) -> str:
     client = build_openai_client(settings)
-    sources = []
-    for index, chunk in enumerate(retrieved, start=1):
-        sources.append(
-            f"[Source {index} chunk={chunk.chunk_id} page={chunk.metadata.get('page_number')} "
-            f"regions={chunk.metadata.get('source_region_ids') or chunk.metadata.get('region_ids', [])}]\n{chunk.text}"
-        )
+    if compressed_context is not None:
+        evidence_text = compressed_context
+    else:
+        sources = []
+        for index, chunk in enumerate(retrieved, start=1):
+            sources.append(
+                f"[Source {index} chunk={chunk.chunk_id} page={chunk.metadata.get('page_number')} "
+                f"regions={chunk.metadata.get('source_region_ids') or chunk.metadata.get('region_ids', [])}]\n{chunk.text}"
+            )
+        evidence_text = "\n\n".join(sources)
     specialist_sections = [
         f"[{item.agent_name} agent regions={item.region_ids}]\n{item.output}" for item in specialists
     ]
-    evidence_text = "\n\n".join(sources)
     specialist_text = "\n\n".join(specialist_sections) if specialist_sections else "None"
     return client.generate_text(
         system_prompt=(
