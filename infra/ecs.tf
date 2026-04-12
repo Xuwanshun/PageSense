@@ -80,6 +80,7 @@ resource "aws_ecs_task_definition" "app" {
         { name = "VECTORSTORE_DIR",         value = "/app/data/embedded" },
         { name = "PADDLE_CACHE_DIR",        value = "/app/paddle_models" },
         { name = "PADDLE_PDX_CACHE_HOME",   value = "/app/paddle_models" },
+        { name = "FLAGS_use_mkldnn",        value = "0" },
         { name = "AWS_REGION",              value = var.aws_region },
         { name = "S3_BUCKET_NAME",          value = aws_s3_bucket.artifacts.bucket },
       ]

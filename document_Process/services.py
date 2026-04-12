@@ -65,6 +65,9 @@ def _configure_paddle_env(cache_dir: Path) -> None:
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
+    # Disable oneDNN (MKL-DNN) — causes NotImplementedError on ECS Fargate CPUs
+    # with PaddlePaddle 3.x due to unsupported PIR attribute types in onednn_instruction.cc
+    os.environ["FLAGS_use_mkldnn"] = "0"
 
 
 @dataclass(frozen=True)
