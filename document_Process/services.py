@@ -722,6 +722,8 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
 
 @lru_cache(maxsize=1)
 def _get_paddle_ocr() -> Any:
+    import paddle
+    paddle.set_flags({"FLAGS_use_mkldnn": False})
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
@@ -735,6 +737,8 @@ def _get_paddle_ocr() -> Any:
 
 @lru_cache(maxsize=1)
 def _get_paddle_layout_detector() -> Any:
+    import paddle
+    paddle.set_flags({"FLAGS_use_mkldnn": False})
     from paddleocr import LayoutDetection
 
     return LayoutDetection()
