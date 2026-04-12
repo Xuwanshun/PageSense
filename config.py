@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # ── Pipeline tuning ───────────────────────────────────────────────────────
     preprocess_chunk_size: int = 1800
     preprocess_chunk_overlap: int = 200
-    pdf_render_scale: float = 3.0
+    pdf_render_scale: float = 2.0
     default_top_k: int = 4
     # Set to True if you have chromadb installed and prefer it over the
     # built-in JSON vector store.

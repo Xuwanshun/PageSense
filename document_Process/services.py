@@ -739,6 +739,11 @@ def _get_paddle_ocr() -> Any:
         text_detection_model_name="PP-OCRv4_mobile_det",
         text_recognition_model_name="PP-OCRv4_mobile_rec",
         enable_mkldnn=False,
+        # Pin the detection input size. Without this, unusual page dimensions
+        # after PaddleOCR's internal resize can trigger a crash in PaddlePaddle's
+        # DepthwiseConvKernel (Im2ColFunctor) on certain input shapes.
+        text_det_limit_side_len=960,
+        text_det_limit_type="max",
     )
 
 
