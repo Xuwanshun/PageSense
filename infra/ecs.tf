@@ -56,18 +56,10 @@ resource "aws_ecs_task_definition" "app" {
   execution_role_arn = aws_iam_role.ecs_task_execution.arn  # ECS pulls image + secrets
   task_role_arn      = aws_iam_role.ecs_task.arn            # app accesses S3
 
-  # EFS volume for Paddle model cache (models persist across container restarts)
-  volume {
-    name = "paddle-models"
-    efs_volume_configuration {
-      file_system_id          = aws_efs_file_system.paddle_models.id
-      transit_encryption      = "ENABLED"
-      authorization_config {
-        access_point_id = aws_efs_access_point.paddle_models.id
-        iam             = "ENABLED"
-      }
-    }
-  }
+  # NOTE: EFS was previously used for Paddle model caching, but models are now
+  # baked directly into the ARM64 Docker image at build time (Stage 3 in Dockerfile).
+  # This avoids architecture mismatch: x86 EFS-cached models crash on ARM64 Fargate.
+  # The EFS resource still exists in infra (efs.tf) but is not mounted here.
 
   container_definitions = jsonencode([
     {
@@ -108,14 +100,7 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      # Mount the EFS volume for Paddle models
-      mountPoints = [
-        {
-          containerPath = "/app/paddle_models"
-          sourceVolume  = "paddle-models"
-          readOnly      = false
-        }
-      ]
+      mountPoints = []
 
       # CloudWatch Logs: where container stdout/stderr goes.
       # Set LOG_FORMAT=json so CloudWatch Insights can query fields.
