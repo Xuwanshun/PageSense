@@ -41,14 +41,14 @@ except Exception as exc:
     print(f"PaddleOCR download warning: {exc}", file=sys.stderr)
     sys.exit(1)  # fail the build so the error is visible, not silently skipped
 
-print("Downloading PaddleX layout detection models...")
+print("Downloading layout detection models...")
 try:
-    from paddlex import create_pipeline
+    from paddleocr import LayoutDetection
 
-    create_pipeline(pipeline="PP-DocLayout_plus-L")
-    print("PaddleX layout models ready.")
+    LayoutDetection(enable_mkldnn=False)
+    print("Layout detection models ready.")
 except Exception as exc:
-    print(f"PaddleX download warning: {exc}", file=sys.stderr)
+    print(f"Layout detection download warning: {exc}", file=sys.stderr)
     sys.exit(1)
 
 print("Model pre-download complete.")
