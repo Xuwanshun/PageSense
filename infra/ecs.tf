@@ -46,6 +46,13 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = var.container_cpu     # 2048 = 2 vCPU
   memory                   = var.container_memory  # 8192 = 8 GB
 
+  # ARM64 / Graviton — avoids Intel oneDNN which causes NotImplementedError
+  # in PaddlePaddle 3.x on x86. Graviton is also ~20% cheaper than x86 Fargate.
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
   execution_role_arn = aws_iam_role.ecs_task_execution.arn  # ECS pulls image + secrets
   task_role_arn      = aws_iam_role.ecs_task.arn            # app accesses S3
 

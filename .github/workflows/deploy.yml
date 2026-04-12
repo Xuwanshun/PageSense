@@ -67,7 +67,7 @@ jobs:
   # ── Build and deploy ────────────────────────────────────────────────────────
   deploy:
     name: Build, push, and deploy to ECS
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm  # native ARM64 runner — image targets Graviton ECS
     needs: [lint, test]  # only deploy if lint + test passed
 
     # Required GitHub repository secrets (Settings → Secrets → Actions):
