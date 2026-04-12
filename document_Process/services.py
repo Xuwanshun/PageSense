@@ -140,7 +140,7 @@ class OCRService:
                 payload = ocr.predict(str(page.page_image_path))[0].json["res"]
             except Exception as exc:
                 raise RuntimeError(
-                    "PaddleOCR text extraction failed. Make sure paddlepaddle, paddleocr, and paddlex[ocr] are installed."
+                    f"PaddleOCR text extraction failed on page {page.page_number}: {type(exc).__name__}: {exc}"
                 ) from exc
 
             items: list[OCRTextItem] = []
