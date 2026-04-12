@@ -57,9 +57,7 @@ async def preprocess(request: Request, file: UploadFile) -> JSONResponse:
         # remains free to answer ALB health checks during long processing.
         # Without this, 48-page PDFs take >90s and ECS kills the task.
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, lambda: preprocess_document(dest, settings=settings, force=True)
-        )
+        result = await loop.run_in_executor(None, lambda: preprocess_document(dest, settings=settings, force=True))
     except Exception as exc:
         logger.exception("Preprocessing failed for %s", dest)
         raise HTTPException(status_code=500, detail=f"Preprocessing failed: {exc}") from exc
