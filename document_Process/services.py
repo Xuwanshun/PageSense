@@ -723,11 +723,27 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
     return PageContext(page_number=page_number, width=float(width), height=float(height), page_image_path=path)
 
 
+def _disable_paddle_mkldnn() -> None:
+    """
+    Prevent PaddlePaddle from using Intel oneDNN (MKL-DNN) on x86 Fargate.
+
+    PaddleOCR/PaddleX internally calls config.enable_mkldnn() on the Paddle
+    inference Config before creating each predictor. On x86 ECS Fargate,
+    PaddlePaddle 3.x's PIR executor crashes with NotImplementedError when
+    oneDNN tries to handle unsupported attribute types. Setting FLAGS_use_mkldnn=0
+    is not enough because the explicit enable_mkldnn() call overrides the flag.
+
+    We patch Config.enable_mkldnn to a no-op so oneDNN is never activated,
+    regardless of what PaddleOCR/PaddleX does internally.
+    """
+    import paddle.inference as _pi
+
+    _pi.Config.enable_mkldnn = lambda self: None  # type: ignore[method-assign]
+
+
 @lru_cache(maxsize=1)
 def _get_paddle_ocr() -> Any:
-    import paddle
-
-    paddle.set_flags({"FLAGS_use_mkldnn": False, "FLAGS_enable_pir_in_executor": False})
+    _disable_paddle_mkldnn()
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
@@ -741,9 +757,7 @@ def _get_paddle_ocr() -> Any:
 
 @lru_cache(maxsize=1)
 def _get_paddle_layout_detector() -> Any:
-    import paddle
-
-    paddle.set_flags({"FLAGS_use_mkldnn": False, "FLAGS_enable_pir_in_executor": False})
+    _disable_paddle_mkldnn()
     from paddleocr import LayoutDetection
 
     return LayoutDetection()
