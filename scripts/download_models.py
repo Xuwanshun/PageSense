@@ -21,7 +21,15 @@ print("Downloading PaddleOCR models...")
 try:
     from paddleocr import PaddleOCR
 
-    PaddleOCR(use_gpu=False, show_log=False)
+    PaddleOCR(
+        use_gpu=False,
+        show_log=False,
+        text_detection_model_name="PP-OCRv4_mobile_det",
+        text_recognition_model_name="PP-OCRv4_mobile_rec",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
     print("PaddleOCR models ready.")
 except Exception as exc:
     print(f"PaddleOCR download warning: {exc}", file=sys.stderr)

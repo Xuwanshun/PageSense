@@ -46,19 +46,18 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = var.container_cpu     # 2048 = 2 vCPU
   memory                   = var.container_memory  # 8192 = 8 GB
 
-  # ARM64 / Graviton — avoids Intel oneDNN which causes NotImplementedError
-  # in PaddlePaddle 3.x on x86. Graviton is also ~20% cheaper than x86 Fargate.
+  # x86_64 — PaddlePaddle ARM64 (Graviton) has a segfault bug in 3.x inference.
+  # x86 oneDNN error is handled by disabling mkldnn via FLAGS_use_mkldnn=0.
   runtime_platform {
-    cpu_architecture        = "ARM64"
+    cpu_architecture        = "X86_64"
     operating_system_family = "LINUX"
   }
 
   execution_role_arn = aws_iam_role.ecs_task_execution.arn  # ECS pulls image + secrets
   task_role_arn      = aws_iam_role.ecs_task.arn            # app accesses S3
 
-  # NOTE: EFS was previously used for Paddle model caching, but models are now
-  # baked directly into the ARM64 Docker image at build time (Stage 3 in Dockerfile).
-  # This avoids architecture mismatch: x86 EFS-cached models crash on ARM64 Fargate.
+  # NOTE: EFS was previously used for Paddle model caching. Models are now
+  # baked directly into the Docker image at build time (Stage 3 in Dockerfile).
   # The EFS resource still exists in infra (efs.tf) but is not mounted here.
 
   container_definitions = jsonencode([

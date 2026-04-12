@@ -108,7 +108,7 @@ jobs:
   #   - pip install failures (e.g. version conflicts, missing packages)
   build-check:
     name: Docker build check (deps stage)
-    runs-on: ubuntu-24.04-arm  # match deploy architecture (ARM64/Graviton)
+    runs-on: ubuntu-latest  # match deploy architecture (x86_64)
 
     steps:
       - name: Check out code

@@ -12,7 +12,15 @@ continue to work without modification.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+# Must be set before any PaddlePaddle import to disable Intel oneDNN (MKL-DNN).
+# On x86 Fargate, the PaddlePaddle 3.x PIR executor crashes with NotImplementedError
+# when oneDNN tries to handle unsupported attribute types. Setting these env vars
+# before import prevents that code path from being activated.
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 
 from config import Settings, ensure_data_dirs
 from logging_config import configure_logging
