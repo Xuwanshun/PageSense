@@ -1,12 +1,16 @@
 """
 Document management endpoints.
 
-PDF preprocessing (30-120s) is handled synchronously — the HTTP request
-blocks until the pipeline finishes. The connection must remain open.
+PDF preprocessing (OCR + layout detection) is CPU-bound and can take
+several minutes for large PDFs. It is offloaded to a thread pool executor
+so the asyncio event loop stays free to answer ALB health checks during
+processing. Without this, health checks time out after 90s and ECS kills
+the task mid-preprocessing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 
@@ -49,7 +53,13 @@ async def preprocess(request: Request, file: UploadFile) -> JSONResponse:
 
     logger.info("Starting preprocessing: %s", dest)
     try:
-        result = preprocess_document(dest, settings=settings, force=True)
+        # Run the CPU-bound pipeline in a thread pool so the event loop
+        # remains free to answer ALB health checks during long processing.
+        # Without this, 48-page PDFs take >90s and ECS kills the task.
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: preprocess_document(dest, settings=settings, force=True)
+        )
     except Exception as exc:
         logger.exception("Preprocessing failed for %s", dest)
         raise HTTPException(status_code=500, detail=f"Preprocessing failed: {exc}") from exc
