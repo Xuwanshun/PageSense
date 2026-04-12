@@ -11,6 +11,29 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+# ── PaddlePaddle 3.3.x stability patches ─────────────────────────────────────
+# PaddlePaddle 3.3.x on x86 CPU crashes during inference via its PIR executor.
+# Setting FLAGS_* as environment variables is insufficient — the inference API
+# ignores them. These patches must run at import time, before any predictor
+# is created.
+try:
+    import paddle as _paddle
+    import paddle.inference as _pi
+
+    # Prevent oneDNN/mkldnn from being enabled — causes NotImplementedError in
+    # the PIR+oneDNN code path on x86 (PaddlePaddle issue #77340).
+    _pi.Config.enable_mkldnn = lambda self: None  # type: ignore[method-assign]
+
+    # Switch from the PIR executor to the legacy executor. The PIR executor in
+    # 3.3.x crashes non-deterministically on x86 CPU (AddFunctor, DepthwiseConv,
+    # etc.) — the exact op varies per run, making it a runtime bug in PIR itself.
+    _paddle.set_flags({"FLAGS_enable_pir_in_executor": False})
+
+except Exception as _e:
+    # Paddle not installed (e.g. unit tests) — patches are skipped silently.
+    logging.getLogger(__name__).debug("Paddle patches skipped: %s", _e)
+# ─────────────────────────────────────────────────────────────────────────────
+
 from config import Settings
 from document_Process.models import (
     BoundingBox,
