@@ -82,6 +82,10 @@ resource "aws_lb" "app" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
+
+  # PDF preprocessing (OCR + layout detection) takes 2-5 minutes per document.
+  # Default 60s would timeout every request. 600s gives headroom for large PDFs.
+  idle_timeout = 600
 }
 
 # Target group: the set of ECS tasks the ALB forwards traffic to.
