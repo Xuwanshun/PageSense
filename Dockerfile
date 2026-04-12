@@ -123,6 +123,7 @@ COPY . /app/
 # Create data directories that the app writes to at runtime.
 # These are typically replaced by volume mounts (Docker) or EFS mounts (ECS).
 RUN mkdir -p /app/data/raw /app/data/processed /app/data/embedded \
+        /app/paddle_models/huggingface_cache \
     && chown -R appuser:appgroup /app/data /app/paddle_models
 
 # Switch to non-root user
@@ -143,6 +144,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Paddle model cache (points to the directory we baked models into above)
 ENV PADDLE_PDX_CACHE_HOME=/app/paddle_models
 ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+
+# appuser has no home directory (--no-create-home). Without HF_HOME, HuggingFace Hub
+# tries to write to ~/.cache/huggingface which doesn't exist, causing Permission denied
+# when downloading PP-DocLayout_plus-L at runtime. Point it to our writable paddle_models dir.
+ENV HF_HOME=/app/paddle_models/huggingface_cache
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV FLAGS_use_mkldnn=0

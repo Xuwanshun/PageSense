@@ -18,26 +18,35 @@ const FALLBACK_EXAMPLE_QUESTIONS = [
 
 async function init() {
   const payload = await fetchJson("/api/showcase-data");
-  if (!payload || !payload.summary || !payload.summary.retrieval) {
+
+  // If the server is unreachable, disable the form entirely.
+  if (!payload) {
     renderLoadError();
     renderExampleQuestions(FALLBACK_EXAMPLE_QUESTIONS);
-    renderCorpusPreviews(payload?.corpus_previews || []);
+    renderCorpusPreviews([]);
     setupAskForm(false);
     return;
   }
 
-  const summary = payload.summary;
-  const retrieval = summary.retrieval;
-  const topN = retrieval.attribution_top_n ?? 2;
-  METRIC_PATHS.attr_recall_tol = `citation_recall_fuzzy_attribution_top_${topN}`;
-
-  renderRunHeader(payload.latest_run, summary.questions, topN);
+  // Render corpus info and example questions regardless of eval data.
   renderStats(payload.stats || {});
   renderCorpusPreviews(payload.corpus_previews || []);
-  renderMetrics(retrieval);
-  renderJudge(payload.judge?.summary || summary.llm_judge || null);
-  renderPredictionExamples(payload.prediction_examples || []);
   renderExampleQuestions(payload.example_questions || FALLBACK_EXAMPLE_QUESTIONS);
+
+  // Render eval metrics only when an evaluation run exists.
+  if (payload.summary && payload.summary.retrieval) {
+    const summary = payload.summary;
+    const retrieval = summary.retrieval;
+    const topN = retrieval.attribution_top_n ?? 2;
+    METRIC_PATHS.attr_recall_tol = `citation_recall_fuzzy_attribution_top_${topN}`;
+
+    renderRunHeader(payload.latest_run, summary.questions, topN);
+    renderMetrics(retrieval);
+    renderJudge(payload.judge?.summary || summary.llm_judge || null);
+    renderPredictionExamples(payload.prediction_examples || []);
+  }
+
+  // The ask form works whenever the server is up — no eval run required.
   setupAskForm(true);
 }
 
