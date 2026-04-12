@@ -103,10 +103,7 @@ RUN mkdir -p /app/paddle_models/temp
 #   lines like `import os` as Dockerfile instructions and fails.
 #   Using a script file avoids this entirely and is easier to read.
 COPY scripts/download_models.py /tmp/download_models.py
-RUN python /tmp/download_models.py \
-    || echo "Model pre-download encountered issues — models will download on first use."
-# Note: the || echo means the build continues even if this fails.
-# Models will then download lazily on first container startup.
+RUN python /tmp/download_models.py
 
 # ── Stage 4: final ────────────────────────────────────────────────────────────
 # Copy application source code. This is the stage that rebuilds on
