@@ -65,9 +65,12 @@ def _configure_paddle_env(cache_dir: Path) -> None:
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
-    # Disable oneDNN (MKL-DNN) — causes NotImplementedError on ECS Fargate CPUs
-    # with PaddlePaddle 3.x due to unsupported PIR attribute types in onednn_instruction.cc
+    # Disable oneDNN and the PIR executor — the PIR + oneDNN combination causes
+    # NotImplementedError on ECS Fargate Intel CPUs with PaddlePaddle 3.x.
+    # FLAGS_use_mkldnn disables oneDNN; FLAGS_enable_pir_in_executor forces the
+    # old executor which does not have the PIR oneDNN instruction bug.
     os.environ["FLAGS_use_mkldnn"] = "0"
+    os.environ["FLAGS_enable_pir_in_executor"] = "0"
 
 
 @dataclass(frozen=True)
@@ -724,7 +727,7 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
 def _get_paddle_ocr() -> Any:
     import paddle
 
-    paddle.set_flags({"FLAGS_use_mkldnn": False})
+    paddle.set_flags({"FLAGS_use_mkldnn": False, "FLAGS_enable_pir_in_executor": False})
     from paddleocr import PaddleOCR
 
     return PaddleOCR(
@@ -740,7 +743,7 @@ def _get_paddle_ocr() -> Any:
 def _get_paddle_layout_detector() -> Any:
     import paddle
 
-    paddle.set_flags({"FLAGS_use_mkldnn": False})
+    paddle.set_flags({"FLAGS_use_mkldnn": False, "FLAGS_enable_pir_in_executor": False})
     from paddleocr import LayoutDetection
 
     return LayoutDetection()

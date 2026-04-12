@@ -149,6 +149,7 @@ ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV FLAGS_use_mkldnn=0
+ENV FLAGS_enable_pir_in_executor=0
 
 # App configuration defaults for the container environment
 ENV RAW_DOCUMENTS_DIR=/app/data/raw
