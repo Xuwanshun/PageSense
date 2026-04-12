@@ -30,7 +30,6 @@ try:
 
     PaddleOCR(
         use_gpu=False,
-        show_log=False,
         text_detection_model_name="PP-OCRv4_mobile_det",
         text_recognition_model_name="PP-OCRv4_mobile_rec",
         use_doc_orientation_classify=False,
