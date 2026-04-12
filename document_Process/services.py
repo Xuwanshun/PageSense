@@ -723,44 +723,31 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
     return PageContext(page_number=page_number, width=float(width), height=float(height), page_image_path=path)
 
 
-def _disable_paddle_mkldnn() -> None:
-    """
-    Prevent PaddlePaddle from using Intel oneDNN (MKL-DNN) on x86 Fargate.
-
-    PaddleOCR/PaddleX internally calls config.enable_mkldnn() on the Paddle
-    inference Config before creating each predictor. On x86 ECS Fargate,
-    PaddlePaddle 3.x's PIR executor crashes with NotImplementedError when
-    oneDNN tries to handle unsupported attribute types. Setting FLAGS_use_mkldnn=0
-    is not enough because the explicit enable_mkldnn() call overrides the flag.
-
-    We patch Config.enable_mkldnn to a no-op so oneDNN is never activated,
-    regardless of what PaddleOCR/PaddleX does internally.
-    """
-    import paddle.inference as _pi
-
-    _pi.Config.enable_mkldnn = lambda self: None  # type: ignore[method-assign]
-
-
 @lru_cache(maxsize=1)
 def _get_paddle_ocr() -> Any:
-    _disable_paddle_mkldnn()
     from paddleocr import PaddleOCR
 
+    # enable_mkldnn=False: workaround for PaddlePaddle 3.3.x regression (issue #77340).
+    # PaddleX defaults to run_mode="mkldnn" on CPU, which crashes with NotImplementedError
+    # in the PIR executor on x86. This kwarg flows through PaddleX's parse_common_args()
+    # and switches the predictor to run_mode="paddle", bypassing the broken code path.
+    # See: https://github.com/PaddlePaddle/Paddle/issues/77340
     return PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_detection_model_name="PP-OCRv4_mobile_det",
         text_recognition_model_name="PP-OCRv4_mobile_rec",
+        enable_mkldnn=False,
     )
 
 
 @lru_cache(maxsize=1)
 def _get_paddle_layout_detector() -> Any:
-    _disable_paddle_mkldnn()
     from paddleocr import LayoutDetection
 
-    return LayoutDetection()
+    # Same enable_mkldnn=False workaround as _get_paddle_ocr above.
+    return LayoutDetection(enable_mkldnn=False)
 
 
 def _bbox_from_ocr_payload(rec_boxes: list[Any], dt_polys: list[Any], index: int) -> BoundingBox | None:
