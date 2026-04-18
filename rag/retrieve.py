@@ -31,7 +31,9 @@ class QAResponse:
 class VectorStore(Protocol):
     def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None: ...
 
-    def query(self, embedding: list[float], top_k: int) -> list[RetrievedChunk]: ...
+    def query(
+        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+    ) -> list[RetrievedChunk]: ...
 
 
 class JsonVectorStore:
@@ -59,9 +61,13 @@ class JsonVectorStore:
             }
         self._save_rows(list(existing.values()))
 
-    def query(self, embedding: list[float], top_k: int) -> list[RetrievedChunk]:
+    def query(
+        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+    ) -> list[RetrievedChunk]:
         scored: list[RetrievedChunk] = []
         for row in self._load_rows():
+            if document_ids is not None and row.get("metadata", {}).get("document_id") not in document_ids:
+                continue
             score = _cosine_similarity(embedding, row.get("embedding", []))
             scored.append(
                 RetrievedChunk(
@@ -94,12 +100,17 @@ class ChromaVectorStore:
             embeddings=embeddings,
         )
 
-    def query(self, embedding: list[float], top_k: int) -> list[RetrievedChunk]:
-        response = self.collection.query(
-            query_embeddings=[embedding],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+    def query(
+        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+    ) -> list[RetrievedChunk]:
+        kwargs: dict = {
+            "query_embeddings": [embedding],
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if document_ids is not None:
+            kwargs["where"] = {"document_id": {"$in": document_ids}}
+        response = self.collection.query(**kwargs)
         ids = (response.get("ids") or [[]])[0]
         documents = (response.get("documents") or [[]])[0]
         metadatas = (response.get("metadatas") or [[]])[0]
@@ -131,9 +142,13 @@ class DocumentRetriever:
         embeddings = self.embedding_backend.embed_texts([chunk.text for chunk in chunks])
         self.vector_store.upsert(chunks, embeddings)
 
-    def retrieve(self, question: str, top_k: int | None = None) -> list[RetrievedChunk]:
+    def retrieve(
+        self, question: str, top_k: int | None = None, *, document_ids: list[str] | None = None
+    ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_backend.embed_texts([question])[0]
-        return self.vector_store.query(query_embedding, top_k or self.settings.default_top_k)
+        return self.vector_store.query(
+            query_embedding, top_k or self.settings.default_top_k, document_ids=document_ids
+        )
 
     def index_processed_chunks(
         self,
