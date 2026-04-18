@@ -8,8 +8,10 @@ const POLL_INTERVAL_MS = 3000;
  */
 export function initSidebar({ onSelectionChange }) {
   const selectedIds = new Set();
+  const selectedNames = new Map(); // document_id -> source_filename
   const pollingTimers = new Map(); // document_id -> intervalId
   const docCards = new Map();       // document_id -> li element
+  const docNames = new Map();       // document_id -> source_filename
 
   const listEl = document.getElementById('doc-list');
   const emptyEl = document.getElementById('doc-list-empty');
@@ -111,23 +113,26 @@ export function initSidebar({ onSelectionChange }) {
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) {
         selectedIds.add(document_id);
+        selectedNames.set(document_id, docNames.get(document_id) || document_id);
         li.classList.add('doc-card--selected');
       } else {
         selectedIds.delete(document_id);
+        selectedNames.delete(document_id);
         li.classList.remove('doc-card--selected');
       }
       updateSummary();
-      onSelectionChange(new Set(selectedIds));
+      onSelectionChange(new Set(selectedIds), new Map(selectedNames));
     });
 
     listEl.appendChild(li);
     docCards.set(document_id, li);
+    docNames.set(document_id, source_filename);
 
     if (status === 'ready') enableCard(li, document_id);
     updateCardStatus(li, document_id, status, chunk_count, page_count, null);
   }
 
-  function updateCardStatus(li, document_id, status, chunk_count, page_count, error) {
+  function updateCardStatus(li, _document_id, status, chunk_count, page_count, error) {
     const pipeline = li.querySelector('.doc-card__pipeline');
 
     if (status === 'preprocessing') {
@@ -177,9 +182,10 @@ export function initSidebar({ onSelectionChange }) {
     // Auto-select newly ready documents
     checkbox.checked = true;
     selectedIds.add(document_id);
+    selectedNames.set(document_id, docNames.get(document_id) || document_id);
     li.classList.add('doc-card--selected');
     updateSummary();
-    onSelectionChange(new Set(selectedIds));
+    onSelectionChange(new Set(selectedIds), new Map(selectedNames));
   }
 
   function updateSummary() {

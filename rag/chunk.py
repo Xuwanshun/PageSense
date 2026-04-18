@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from document_Process.models import ProcessedChunk
+from document_process.models import ProcessedChunk
 
 
 @dataclass(frozen=True)

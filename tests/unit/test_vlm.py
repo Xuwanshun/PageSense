@@ -1,5 +1,5 @@
 """
-Unit tests for document_Process/vlm.py — VLM visual description enrichment.
+Unit tests for document_process/vlm.py — VLM visual description enrichment.
 
 All OpenAI vision API calls are mocked. No real network calls, no API key needed.
 """
@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import Settings
-from document_Process.models import VisualRegionSummary
-from document_Process.vlm import _describe_crop, enrich_summaries_with_vlm
+from document_process.models import VisualRegionSummary
+from document_process.vlm import _describe_crop, enrich_summaries_with_vlm
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ class TestEnrichSummariesWithVlm:
         summaries = [_summary(crop_path=str(crop), summary_text="Detected table region on page 1.")]
 
         with patch(
-            "document_Process.vlm._describe_crop", return_value=("Q1–Q4 revenue table showing 25% growth", True)
+            "document_process.vlm._describe_crop", return_value=("Q1–Q4 revenue table showing 25% growth", True)
         ) as mock_describe:
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
@@ -76,7 +76,7 @@ class TestEnrichSummariesWithVlm:
     def test_summary_without_crop_not_sent_to_vlm(self):
         summaries = [_summary(crop_path=None)]
 
-        with patch("document_Process.vlm._describe_crop") as mock_describe:
+        with patch("document_process.vlm._describe_crop") as mock_describe:
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         mock_describe.assert_not_called()
@@ -85,7 +85,7 @@ class TestEnrichSummariesWithVlm:
     def test_summary_with_missing_crop_file_not_sent_to_vlm(self, tmp_path):
         summaries = [_summary(crop_path=str(tmp_path / "nonexistent.png"))]
 
-        with patch("document_Process.vlm._describe_crop") as mock_describe:
+        with patch("document_process.vlm._describe_crop") as mock_describe:
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         mock_describe.assert_not_called()
@@ -97,7 +97,7 @@ class TestEnrichSummariesWithVlm:
 
         summaries = [_summary(crop_path=str(crop), summary_text="original text")]
 
-        with patch("document_Process.vlm._describe_crop", side_effect=RuntimeError("API timeout")):
+        with patch("document_process.vlm._describe_crop", side_effect=RuntimeError("API timeout")):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert result[0].summary_text == "original text"  # fallback preserved
@@ -110,7 +110,7 @@ class TestEnrichSummariesWithVlm:
         original = _summary(crop_path=str(crop), summary_text="original")
         original_text = original.summary_text
 
-        with patch("document_Process.vlm._describe_crop", return_value=("new description", True)):
+        with patch("document_process.vlm._describe_crop", return_value=("new description", True)):
             enrich_summaries_with_vlm([original], settings=_settings())
 
         assert original.summary_text == original_text  # input not mutated
@@ -132,7 +132,7 @@ class TestEnrichSummariesWithVlm:
             _summary(region_id="r2", crop_path=str(crop2)),
         ]
 
-        with patch("document_Process.vlm._describe_crop", side_effect=fake_describe):
+        with patch("document_process.vlm._describe_crop", side_effect=fake_describe):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert result[0].summary_text == "VLM description for r1"
@@ -147,7 +147,7 @@ class TestEnrichSummariesWithVlm:
             _summary(region_id="r2", crop_path=None),  # no crop → kept as-is
         ]
 
-        with patch("document_Process.vlm._describe_crop", return_value=("VLM text", True)):
+        with patch("document_process.vlm._describe_crop", return_value=("VLM text", True)):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert len(result) == 2
@@ -160,7 +160,7 @@ class TestEnrichSummariesWithVlm:
 
         summaries = [_summary(crop_path=str(crop), summary_text="Qualcomm logo")]
 
-        with patch("document_Process.vlm._describe_crop", return_value=("", False)):
+        with patch("document_process.vlm._describe_crop", return_value=("", False)):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert result[0].is_meaningful is False
@@ -173,7 +173,7 @@ class TestEnrichSummariesWithVlm:
         original_text = "some nearby OCR text"
         summaries = [_summary(crop_path=str(crop), summary_text=original_text)]
 
-        with patch("document_Process.vlm._describe_crop", return_value=("", False)):
+        with patch("document_process.vlm._describe_crop", return_value=("", False)):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert result[0].summary_text == original_text  # text unchanged when not meaningful
@@ -198,7 +198,7 @@ class TestEnrichSummariesWithVlm:
                 return ("Revenue grew 15% YoY", True)
             return ("", False)
 
-        with patch("document_Process.vlm._describe_crop", side_effect=fake_describe):
+        with patch("document_process.vlm._describe_crop", side_effect=fake_describe):
             result = enrich_summaries_with_vlm(summaries, settings=_settings())
 
         assert result[0].is_meaningful is True

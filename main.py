@@ -56,7 +56,7 @@ def main() -> None:
     ensure_data_dirs(settings)
 
     if args.preprocess:
-        from document_Process.pipeline import preprocess_document
+        from document_process.pipeline import preprocess_document
 
         pdfs = sorted(p for p in settings.raw_documents_dir.iterdir() if p.suffix.lower() == ".pdf")
         if not pdfs:

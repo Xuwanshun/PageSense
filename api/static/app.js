@@ -10,10 +10,10 @@ const query = initQuery({
 });
 
 const sidebar = initSidebar({
-  onSelectionChange: (ids) => {
+  onSelectionChange: (ids, names) => {
     selectedIds.clear();
     ids.forEach((id) => selectedIds.add(id));
-    query.onSelectionChange(new Set(selectedIds));
+    query.onSelectionChange(new Set(selectedIds), names);
   },
 });
 

@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from document_Process.pipeline import preprocess_document
+from document_process.pipeline import preprocess_document
 from rag.retrieve import index_all_processed_documents
 
 logger = logging.getLogger(__name__)

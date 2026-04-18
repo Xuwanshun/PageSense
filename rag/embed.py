@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from config import Settings
-from document_Process.clients import request_openai_embeddings
+from document_process.clients import request_openai_embeddings
 
 
 class EmbeddingBackend(Protocol):

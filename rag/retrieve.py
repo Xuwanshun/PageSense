@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from config import Settings
-from document_Process.clients import build_openai_client
-from document_Process.models import ProcessedChunk, ProcessedDocument
+from document_process.clients import build_openai_client
+from document_process.models import ProcessedChunk, ProcessedDocument
 from rag.chunk import ChunkRecord, chunk_records_from_processed_chunks
 from rag.embed import EmbeddingBackend, build_embedding_backend
 

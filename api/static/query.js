@@ -11,7 +11,7 @@ export function initQuery({ getSelectedIds }) {
   const askErrorEl = document.getElementById('ask-error');
 
   // ── Query bar ──────────────────────────────────────────────
-  function updateQueryBar(ids) {
+  function updateQueryBar(ids, names) {
     queryTagsEl.innerHTML = '';
     if (ids.size === 0) {
       queryTagsEl.innerHTML = '<span class="query-bar__empty">No documents selected</span>';
@@ -21,15 +21,15 @@ export function initQuery({ getSelectedIds }) {
     ids.forEach((id) => {
       const tag = document.createElement('span');
       tag.className = 'query-tag';
-      tag.textContent = id;
+      tag.textContent = (names && names.get(id)) || id;
       queryTagsEl.appendChild(tag);
     });
     askBtn.disabled = false;
   }
 
   // Called by app.js whenever selection changes
-  function onSelectionChange(ids) {
-    updateQueryBar(ids);
+  function onSelectionChange(ids, names) {
+    updateQueryBar(ids, names);
   }
 
   // ── Chat ───────────────────────────────────────────────────
