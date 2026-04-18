@@ -46,6 +46,15 @@ def _run_pipeline(
             error=None,
         )
         logger.info("Pipeline complete for document_id=%s", document_id)
+
+        if settings.s3_bucket_name:
+            from storage.s3 import sync_embedded_to_s3, sync_processed_to_s3
+
+            try:
+                sync_processed_to_s3(settings)
+                sync_embedded_to_s3(settings)
+            except Exception as exc:
+                logger.warning("S3 sync after upload pipeline failed: %s", exc)
     except Exception as exc:
         logger.exception("Pipeline failed for document_id=%s", document_id)
         jobs[document_id].update(status="error", error=str(exc))
