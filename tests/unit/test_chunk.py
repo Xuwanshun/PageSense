@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from document_Process.models import ProcessedChunk
+from document_process.models import ProcessedChunk
 from rag.chunk import chunk_record_from_processed_chunk, chunk_records_from_processed_chunks
 
 

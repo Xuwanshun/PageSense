@@ -1,5 +1,5 @@
 """
-Unit tests for document_Process/services.py pipeline functions.
+Unit tests for document_process/services.py pipeline functions.
 
 Covers:
   BoundingBox   — area, intersection, validity, merge, round-trip
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from document_Process.models import (
+from document_process.models import (
     BoundingBox,
     CroppedRegionAsset,
     LayoutRegion,
@@ -28,7 +28,7 @@ from document_Process.models import (
     OrderedTextBlock,
     ProcessedChunk,
 )
-from document_Process.services import (
+from document_process.services import (
     AssociationService,
     ReadingOrderService,
     _best_region_match,

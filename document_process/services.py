@@ -35,7 +35,7 @@ except Exception as _e:
 # ─────────────────────────────────────────────────────────────────────────────
 
 from config import Settings
-from document_Process.models import (
+from document_process.models import (
     BoundingBox,
     CroppedRegionAsset,
     LayoutRegion,

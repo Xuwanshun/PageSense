@@ -34,7 +34,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import documents, health, query, showcase
+from api.routers import documents, health, query
 from config import Settings, ensure_data_dirs
 from logging_config import configure_logging
 
@@ -55,6 +55,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.info("Starting RAG API server")
 
         ensure_data_dirs(resolved_settings)
+
+        # In-memory job tracker for upload pipeline status
+        # Keys: document_id, Values: {"status", "error", "chunk_count", "page_count", "source_filename"}
+        app.state.jobs = {}
 
         if resolved_settings.s3_bucket_name:
             from storage.s3 import sync_from_s3
@@ -86,7 +90,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(query.router)
-    app.include_router(showcase.router)
 
     # Serve the main UI at /
     @app.get("/", include_in_schema=False)

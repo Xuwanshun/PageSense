@@ -11,17 +11,44 @@ the task mid-preprocessing.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
+import threading
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from document_Process.pipeline import preprocess_document
+from document_process.pipeline import preprocess_document
 from rag.retrieve import index_all_processed_documents
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _run_pipeline(
+    dest: Path,
+    settings,
+    jobs: dict,
+    document_id: str,
+) -> None:
+    """Run preprocess → index in a background thread and update jobs dict."""
+    try:
+        jobs[document_id]["status"] = "preprocessing"
+        result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
+        jobs[document_id]["status"] = "indexing"
+        index_all_processed_documents(settings=settings)
+        jobs[document_id].update(
+            status="ready",
+            chunk_count=result.chunk_count,
+            page_count=result.page_count,
+            error=None,
+        )
+        logger.info("Pipeline complete for document_id=%s", document_id)
+    except Exception as exc:
+        logger.exception("Pipeline failed for document_id=%s", document_id)
+        jobs[document_id].update(status="error", error=str(exc))
 
 
 @router.post("/preprocess")
@@ -128,5 +155,143 @@ async def build_index(request: Request) -> JSONResponse:
             "indexed_documents": len(indexed),
             "total_chunks": total_chunks,
             "documents": indexed,
+        }
+    )
+
+
+@router.get("")
+async def list_documents(request: Request) -> JSONResponse:
+    """
+    Return all documents — in-progress jobs and ready artifacts on disk.
+    """
+    settings = request.app.state.settings
+    jobs: dict = request.app.state.jobs
+    documents = []
+    seen: set[str] = set()
+
+    # In-progress and recently finished jobs (from memory)
+    for document_id, job in jobs.items():
+        seen.add(document_id)
+        documents.append(
+            {
+                "document_id": document_id,
+                "source_filename": job.get("source_filename", document_id),
+                "status": job["status"],
+                "chunk_count": job.get("chunk_count"),
+                "page_count": job.get("page_count"),
+                "error": job.get("error"),
+            }
+        )
+
+    # Ready documents from filesystem (not in active jobs, e.g. from previous server runs)
+    processed_dir = settings.processed_documents_dir
+    if processed_dir.exists():
+        for doc_dir in sorted(p for p in processed_dir.iterdir() if p.is_dir()):
+            document_id = doc_dir.name
+            if document_id in seen:
+                continue
+            doc_path = doc_dir / "document.json"
+            chunks_path = doc_dir / "chunks.json"
+            if not doc_path.exists():
+                continue
+            doc_data = json.loads(doc_path.read_text(encoding="utf-8"))
+            chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8"))) if chunks_path.exists() else None
+            documents.append(
+                {
+                    "document_id": document_id,
+                    "source_filename": doc_data.get("source_filename", document_id),
+                    "status": "ready",
+                    "chunk_count": chunk_count,
+                    "page_count": doc_data.get("page_count"),
+                    "error": None,
+                }
+            )
+
+    return JSONResponse({"documents": documents})
+
+
+@router.post("/upload")
+async def upload(request: Request, file: UploadFile) -> JSONResponse:
+    """
+    Upload a PDF and automatically run preprocess + index in the background.
+
+    Returns immediately with document_id and status="preprocessing".
+    Poll GET /documents/status/{document_id} every 3 s to track progress.
+    """
+    settings = request.app.state.settings
+    jobs: dict = request.app.state.jobs
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    dest = settings.raw_documents_dir / file.filename
+    settings.raw_documents_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Saving uploaded file: %s", dest)
+    try:
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+    finally:
+        await file.close()
+
+    document_id = dest.stem
+    jobs[document_id] = {
+        "status": "preprocessing",
+        "error": None,
+        "chunk_count": None,
+        "page_count": None,
+        "source_filename": file.filename,
+    }
+    logger.info("Starting pipeline for document_id=%s", document_id)
+
+    thread = threading.Thread(
+        target=_run_pipeline,
+        args=(dest, settings, jobs, document_id),
+        daemon=True,
+    )
+    thread.start()
+
+    return JSONResponse({"document_id": document_id, "status": "preprocessing"})
+
+
+@router.get("/status/{document_id}")
+async def document_status(document_id: str, request: Request) -> JSONResponse:
+    """
+    Return the current pipeline status for a document.
+
+    Status values: preprocessing | indexing | ready | error
+    """
+    settings = request.app.state.settings
+    jobs: dict = request.app.state.jobs
+
+    if document_id in jobs:
+        job = jobs[document_id]
+        return JSONResponse(
+            {
+                "document_id": document_id,
+                "status": job["status"],
+                "error": job.get("error"),
+                "chunk_count": job.get("chunk_count"),
+                "page_count": job.get("page_count"),
+            }
+        )
+
+    # Fall back to filesystem for docs processed before this server run
+    doc_dir = (settings.processed_documents_dir / document_id).resolve()
+    if not str(doc_dir).startswith(str(settings.processed_documents_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid document_id.")
+    if not doc_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Document {document_id!r} not found.")
+
+    chunks_path = doc_dir / "chunks.json"
+    doc_path = doc_dir / "document.json"
+    chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8"))) if chunks_path.exists() else None
+    doc_data = json.loads(doc_path.read_text(encoding="utf-8")) if doc_path.exists() else {}
+    return JSONResponse(
+        {
+            "document_id": document_id,
+            "status": "ready",
+            "error": None,
+            "chunk_count": chunk_count,
+            "page_count": doc_data.get("page_count"),
         }
     )

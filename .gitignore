@@ -54,4 +54,8 @@ doc_pro_test
 .vscode/
 *.swp
 infra/.terraform/
-.claude
+.claude.superpowers/
+.superpowers/
+
+# ── Paddle model weights ──────────────────────────────────────────────────────
+paddle_models/
