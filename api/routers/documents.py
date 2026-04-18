@@ -195,7 +195,7 @@ async def list_documents(request: Request) -> JSONResponse:
             if not doc_path.exists():
                 continue
             doc_data = json.loads(doc_path.read_text(encoding="utf-8"))
-            chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8"))) if chunks_path.exists() else 0
+            chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8"))) if chunks_path.exists() else None
             documents.append(
                 {
                     "document_id": document_id,
@@ -276,7 +276,9 @@ async def document_status(document_id: str, request: Request) -> JSONResponse:
         )
 
     # Fall back to filesystem for docs processed before this server run
-    doc_dir = settings.processed_documents_dir / document_id
+    doc_dir = (settings.processed_documents_dir / document_id).resolve()
+    if not str(doc_dir).startswith(str(settings.processed_documents_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid document_id.")
     if not doc_dir.exists():
         raise HTTPException(status_code=404, detail=f"Document {document_id!r} not found.")
 

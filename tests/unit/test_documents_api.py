@@ -86,3 +86,21 @@ def test_upload_starts_pipeline_and_returns_document_id(client, tmp_settings):
     body = r.json()
     assert body["document_id"] == "report"
     assert body["status"] == "preprocessing"
+
+
+def test_status_returns_ready_from_filesystem(client, tmp_settings):
+    doc_dir = tmp_settings.processed_documents_dir / "fs_doc"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "document.json").write_text(
+        json.dumps({"source_filename": "fs_doc.pdf", "page_count": 5}), encoding="utf-8"
+    )
+    (doc_dir / "chunks.json").write_text(json.dumps([{}, {}]), encoding="utf-8")
+
+    r = client.get("/documents/status/fs_doc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    assert body["document_id"] == "fs_doc"
+    assert body["chunk_count"] == 2
+    assert body["page_count"] == 5
+    assert body["error"] is None
