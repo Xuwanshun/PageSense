@@ -103,6 +103,8 @@ class ChromaVectorStore:
     def query(
         self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
     ) -> list[RetrievedChunk]:
+        if document_ids is not None and not document_ids:
+            return []
         kwargs: dict = {
             "query_embeddings": [embedding],
             "n_results": top_k,
