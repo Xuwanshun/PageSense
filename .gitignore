@@ -54,4 +54,4 @@ doc_pro_test
 .vscode/
 *.swp
 infra/.terraform/
-.claude
+.claude.superpowers/
