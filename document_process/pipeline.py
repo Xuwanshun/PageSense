@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config import Settings
-from document_Process.models import ProcessingIssue
-from document_Process.services import (
+from document_process.models import ProcessingIssue
+from document_process.services import (
     AssociationService,
     CroppingService,
     DocumentLoaderService,
@@ -94,7 +94,7 @@ class DocumentPreprocessingPipeline:
         )
 
         if self.settings.use_vlm_summaries:
-            from document_Process.vlm import enrich_summaries_with_vlm
+            from document_process.vlm import enrich_summaries_with_vlm
 
             visual_summaries = enrich_summaries_with_vlm(visual_summaries, settings=self.settings)
 

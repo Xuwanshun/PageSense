@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
-from document_Process.models import VisualRegionSummary
+from document_process.models import VisualRegionSummary
 
 logger = logging.getLogger(__name__)
 
