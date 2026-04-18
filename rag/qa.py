@@ -32,11 +32,17 @@ def answer_question_from_frozen_artifacts(
     *,
     settings: Settings | None = None,
     top_k: int | None = None,
+    document_ids: list[str] | None = None,
 ) -> MultiAgentQAResponse:
     resolved_settings = settings or Settings()
     retriever = DocumentRetriever(resolved_settings)
     retrieved = _rerank_chunks(
-        question, retriever.retrieve(question, top_k=(top_k or resolved_settings.default_top_k) * 2)
+        question,
+        retriever.retrieve(
+            question,
+            top_k=(top_k or resolved_settings.default_top_k) * 2,
+            document_ids=document_ids,
+        ),
     )
     retrieved = retrieved[: top_k or resolved_settings.default_top_k]
     visual_summaries = _load_visual_summaries(resolved_settings, retrieved)
