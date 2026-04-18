@@ -74,9 +74,9 @@ def test_upload_starts_pipeline_and_returns_document_id(client, tmp_settings):
         patch("api.routers.documents.preprocess_document") as mock_pre,
         patch("api.routers.documents.index_all_processed_documents") as mock_idx,
     ):
-        mock_pre.return_value = type("R", (), {
-            "document_id": "report", "chunk_count": 5, "page_count": 3, "warnings": []
-        })()
+        mock_pre.return_value = type(
+            "R", (), {"document_id": "report", "chunk_count": 5, "page_count": 3, "warnings": []}
+        )()
         mock_idx.return_value = {"report": 5}
 
         data = {"file": ("report.pdf", io.BytesIO(pdf_bytes), "application/pdf")}

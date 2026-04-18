@@ -148,9 +148,7 @@ class DocumentRetriever:
         self, question: str, top_k: int | None = None, *, document_ids: list[str] | None = None
     ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_backend.embed_texts([question])[0]
-        return self.vector_store.query(
-            query_embedding, top_k or self.settings.default_top_k, document_ids=document_ids
-        )
+        return self.vector_store.query(query_embedding, top_k or self.settings.default_top_k, document_ids=document_ids)
 
     def index_processed_chunks(
         self,
