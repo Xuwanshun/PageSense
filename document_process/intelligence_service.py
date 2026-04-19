@@ -143,9 +143,7 @@ class DocumentIntelligenceService:
         for block in ordered_blocks:
             for region_id in block.region_ids:
                 existing = block_text_by_region.get(region_id, "")
-                block_text_by_region[region_id] = (
-                    (existing + " " + block.text).strip() if existing else block.text
-                )
+                block_text_by_region[region_id] = (existing + " " + block.text).strip() if existing else block.text
 
         current_title = "untitled"
         current_subtitle: str | None = None
@@ -175,9 +173,7 @@ class DocumentIntelligenceService:
         for block in ordered_blocks:
             for region_id in block.region_ids:
                 existing = block_text_by_region.get(region_id, "")
-                block_text_by_region[region_id] = (
-                    (existing + " " + block.text).strip() if existing else block.text
-                )
+                block_text_by_region[region_id] = (existing + " " + block.text).strip() if existing else block.text
 
         section_map: dict[str, Section] = {}
         section_order: list[str] = []

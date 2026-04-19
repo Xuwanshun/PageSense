@@ -8,6 +8,7 @@ from typing import Any
 
 from config import Settings
 from document_Process.clients import build_openai_client
+from rag.query_enhancement import classify_query, decompose_query, hyde_enhance
 from rag.retrieve import DocumentRetriever, RetrievedChunk
 
 
@@ -39,9 +40,7 @@ def answer_question_from_frozen_artifacts(
     doc_filter: list[str] | None = None
     if resolved_settings.use_document_intelligence:
         query_embedding = retriever.embedding_backend.embed_texts([question])[0]
-        matched_docs = retriever.filter_by_relevance(
-            query_embedding, resolved_settings.doc_filter_threshold
-        )
+        matched_docs = retriever.filter_by_relevance(query_embedding, resolved_settings.doc_filter_threshold)
         if not matched_docs:
             return MultiAgentQAResponse(
                 question=question,
@@ -57,14 +56,25 @@ def answer_question_from_frozen_artifacts(
             )
         doc_filter = matched_docs
 
-    retrieved = _rerank_chunks(
-        question,
-        retriever.retrieve(
-            question,
-            top_k=(top_k or resolved_settings.default_top_k) * 2,
-            doc_filter=doc_filter,
-        ),
-    )
+    fetch_k = (top_k or resolved_settings.default_top_k) * 2
+    if resolved_settings.use_query_enhancement:
+        query_type = classify_query(question, resolved_settings)
+        if query_type == "complex":
+            sub_queries = decompose_query(question, resolved_settings)
+            seen_ids: set[str] = set()
+            raw_chunks: list[RetrievedChunk] = []
+            for sub_q in sub_queries:
+                for chunk in retriever.retrieve(sub_q, top_k=fetch_k, doc_filter=doc_filter):
+                    if chunk.chunk_id not in seen_ids:
+                        seen_ids.add(chunk.chunk_id)
+                        raw_chunks.append(chunk)
+        else:
+            hypothetical = hyde_enhance(question, resolved_settings)
+            raw_chunks = retriever.retrieve(hypothetical, top_k=fetch_k, doc_filter=doc_filter)
+    else:
+        raw_chunks = retriever.retrieve(question, top_k=fetch_k, doc_filter=doc_filter)
+
+    retrieved = _rerank_chunks(question, raw_chunks)
     retrieved = retrieved[: top_k or resolved_settings.default_top_k]
     visual_summaries = _load_visual_summaries(resolved_settings, retrieved)
     router = _route_question(question, retrieved, visual_summaries)

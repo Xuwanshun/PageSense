@@ -63,9 +63,7 @@ class JsonVectorStore:
             }
         self._save_rows(list(existing.values()))
 
-    def query(
-        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]:
+    def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         scored: list[RetrievedChunk] = []
         filter_set = set(doc_filter) if doc_filter else None
         for row in self._load_rows():
@@ -125,9 +123,7 @@ class ChromaVectorStore:
             embeddings=embeddings,
         )
 
-    def query(
-        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]:
+    def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         query_kwargs: dict[str, Any] = {
             "query_embeddings": [embedding],
             "n_results": top_k,

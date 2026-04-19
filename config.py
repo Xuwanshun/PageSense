@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     # exceeds this threshold.
     doc_filter_threshold: float = 0.60
 
+    # ── Query enhancement ─────────────────────────────────────────────────────
+    # When enabled, simple queries are enhanced with HyDE (hypothetical document
+    # embeddings) and complex queries are decomposed into sub-queries before
+    # retrieval. Disable in tests to avoid extra LLM calls.
+    use_query_enhancement: bool = True
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).
