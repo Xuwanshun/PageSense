@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
-from document_process.clients import build_openai_client
+from document_Process.clients import build_openai_client
 from rag.retrieve import DocumentRetriever, RetrievedChunk
 
 
@@ -32,16 +32,37 @@ def answer_question_from_frozen_artifacts(
     *,
     settings: Settings | None = None,
     top_k: int | None = None,
-    document_ids: list[str] | None = None,
 ) -> MultiAgentQAResponse:
     resolved_settings = settings or Settings()
     retriever = DocumentRetriever(resolved_settings)
+
+    doc_filter: list[str] | None = None
+    if resolved_settings.use_document_intelligence:
+        query_embedding = retriever.embedding_backend.embed_texts([question])[0]
+        matched_docs = retriever.filter_by_relevance(
+            query_embedding, resolved_settings.doc_filter_threshold
+        )
+        if not matched_docs:
+            return MultiAgentQAResponse(
+                question=question,
+                answer="No relevant documents found in the corpus for this question.",
+                sources=[],
+                router={
+                    "use_table_agent": False,
+                    "use_figure_agent": False,
+                    "table_regions": [],
+                    "figure_regions": [],
+                },
+                specialists=[],
+            )
+        doc_filter = matched_docs
+
     retrieved = _rerank_chunks(
         question,
         retriever.retrieve(
             question,
             top_k=(top_k or resolved_settings.default_top_k) * 2,
-            document_ids=document_ids,
+            doc_filter=doc_filter,
         ),
     )
     retrieved = retrieved[: top_k or resolved_settings.default_top_k]

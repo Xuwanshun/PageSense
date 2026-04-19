@@ -654,6 +654,8 @@ def export_artifacts(
     chunks: list[ProcessedChunk],
     document: ProcessedDocument,
     metadata: ProcessingMetadata,
+    descriptor: dict[str, Any] | None = None,
+    summary_embedding: list[float] | None = None,
 ) -> Path:
     crops_dir = working_dir / "crops"
     crops_dir.mkdir(parents=True, exist_ok=True)
@@ -699,7 +701,12 @@ def export_artifacts(
     _write_json(
         working_dir / "visual_summaries.json", [summary.model_dump(mode="json") for summary in visual_summaries]
     )
-    _write_json(working_dir / "document.json", document.model_dump(mode="json"))
+    doc_payload = document.model_dump(mode="json")
+    if descriptor:
+        doc_payload["descriptor"] = descriptor
+    if summary_embedding:
+        doc_payload["summary_embedding"] = summary_embedding
+    _write_json(working_dir / "document.json", doc_payload)
     _write_json(working_dir / "chunks.json", [chunk.model_dump(mode="json") for chunk in chunks])
     _write_json(working_dir / "metadata.json", metadata.model_dump(mode="json"))
     return working_dir / "document.json"

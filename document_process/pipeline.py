@@ -78,20 +78,73 @@ class DocumentPreprocessingPipeline:
         )
         issues.extend(crop_issues)
 
+        intel_result = None
+        if (
+            self.settings.use_document_intelligence
+            or self.settings.use_vlm_summaries
+            or self.settings.use_adaptive_chunking
+        ):
+            from document_Process.intelligence_service import DocumentIntelligenceService
+
+            intel_service = DocumentIntelligenceService(self.settings)
+            intel_result = intel_service.process(
+                regions=regions,
+                document_id=loaded.document_id,
+                file_name=loaded.original_copy_path.name,
+                page_count=len(loaded.pages),
+                ordered_blocks=ordered_blocks,
+            )
+
+        target_chars = self.settings.preprocess_chunk_size
+        overlap_chars = self.settings.preprocess_chunk_overlap
+        if intel_result is not None:
+            target_chars = int(intel_result.strategy.get("chunk_size", target_chars))
+            overlap_chars = int(intel_result.strategy.get("overlap", overlap_chars))
+
         chunks = build_chunks(
             document_id=loaded.document_id,
             source_file=loaded.original_copy_path.name,
             ordered_blocks=ordered_blocks,
             regions=regions,
-            target_chars=self.settings.preprocess_chunk_size,
-            overlap_chars=self.settings.preprocess_chunk_overlap,
+            target_chars=target_chars,
+            overlap_chars=overlap_chars,
         )
+
+        if intel_result is not None:
+            region_parent: dict[str, tuple[str, str | None]] = {
+                region.region_id: (
+                    str(region.metadata.get("parent_title") or ""),
+                    region.metadata.get("parent_subtitle"),
+                )
+                for region in regions
+                if region.metadata.get("parent_title") is not None
+            }
+            for chunk in chunks:
+                for region_id in chunk.source_region_ids:
+                    if region_id in region_parent:
+                        parent_title, parent_subtitle = region_parent[region_id]
+                        chunk.metadata["parent_title"] = parent_title
+                        if parent_subtitle is not None:
+                            chunk.metadata["parent_subtitle"] = parent_subtitle
+                        break
+
         visual_summaries = build_visual_summaries(
             regions=regions,
             ordered_blocks=ordered_blocks,
             chunks=chunks,
             cropped_assets=cropped_assets,
         )
+
+        if intel_result is not None and intel_result.visual_summaries:
+            intel_vs = intel_result.visual_summaries
+            visual_summaries = [
+                summary.model_copy(
+                    update={"metadata": {**summary.metadata, "intelligence": intel_vs[summary.crop_path]}}
+                )
+                if summary.crop_path and summary.crop_path in intel_vs
+                else summary
+                for summary in visual_summaries
+            ]
 
         if self.settings.use_vlm_summaries:
             from document_process.vlm import enrich_summaries_with_vlm
@@ -123,6 +176,8 @@ class DocumentPreprocessingPipeline:
             chunks=chunks,
             document=document,
             metadata=metadata,
+            descriptor=intel_result.descriptor if intel_result is not None else None,
+            summary_embedding=intel_result.summary_embedding if intel_result is not None else None,
         )
         logger.info(
             "Finished preprocessing document %s with %s page(s) and %s chunk(s)",

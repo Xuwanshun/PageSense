@@ -94,6 +94,22 @@ class Settings(BaseSettings):
     use_vlm_summaries: bool = False
     vlm_model: str = "gpt-4o"
 
+    # ── Document intelligence ─────────────────────────────────────────────────
+    # Enables title propagation, section grouping, and a document descriptor.
+    # The descriptor's summary embedding is stored in document.json and used
+    # for doc-level pre-filtering at query time.
+    use_document_intelligence: bool = False
+    # When enabled, the chunking strategy (size, overlap, table handling) is
+    # chosen per document by the descriptor model rather than using the fixed
+    # PREPROCESS_CHUNK_SIZE / PREPROCESS_CHUNK_OVERLAP defaults.
+    use_adaptive_chunking: bool = False
+    # Model for section and document summarization (lightweight is fine).
+    descriptor_model: str = "gpt-4o-mini"
+    # Cosine similarity threshold for doc-level pre-filtering at query time.
+    # Queries are only searched against documents whose summary embedding
+    # exceeds this threshold.
+    doc_filter_threshold: float = 0.60
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).

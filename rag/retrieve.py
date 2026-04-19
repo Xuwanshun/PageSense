@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from config import Settings
-from document_process.clients import build_openai_client
-from document_process.models import ProcessedChunk, ProcessedDocument
+from document_Process.clients import build_openai_client
+from document_Process.models import ProcessedChunk, ProcessedDocument
 from rag.chunk import ChunkRecord, chunk_records_from_processed_chunks
 from rag.embed import EmbeddingBackend, build_embedding_backend
 
@@ -32,8 +32,10 @@ class VectorStore(Protocol):
     def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None: ...
 
     def query(
-        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
     ) -> list[RetrievedChunk]: ...
+
+    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]: ...
 
 
 class JsonVectorStore:
@@ -62,12 +64,15 @@ class JsonVectorStore:
         self._save_rows(list(existing.values()))
 
     def query(
-        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
     ) -> list[RetrievedChunk]:
         scored: list[RetrievedChunk] = []
+        filter_set = set(doc_filter) if doc_filter else None
         for row in self._load_rows():
-            if document_ids is not None and row.get("metadata", {}).get("document_id") not in document_ids:
-                continue
+            if filter_set is not None:
+                doc_id = row.get("metadata", {}).get("document_id")
+                if doc_id not in filter_set:
+                    continue
             score = _cosine_similarity(embedding, row.get("embedding", []))
             scored.append(
                 RetrievedChunk(
@@ -78,6 +83,26 @@ class JsonVectorStore:
                 )
             )
         return sorted(scored, key=lambda item: item.score, reverse=True)[:top_k]
+
+    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]:
+        seen_ids: set[str] = set()
+        for row in self._load_rows():
+            doc_id = row.get("metadata", {}).get("document_id")
+            if doc_id:
+                seen_ids.add(str(doc_id))
+        result: list[dict[str, Any]] = []
+        for doc_id in seen_ids:
+            doc_path = processed_documents_dir / doc_id / "document.json"
+            if not doc_path.exists():
+                continue
+            try:
+                payload = json.loads(doc_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            embedding = payload.get("summary_embedding")
+            if embedding:
+                result.append({"document_id": doc_id, "summary_embedding": embedding})
+        return result
 
 
 class ChromaVectorStore:
@@ -101,18 +126,16 @@ class ChromaVectorStore:
         )
 
     def query(
-        self, embedding: list[float], top_k: int, *, document_ids: list[str] | None = None
+        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
     ) -> list[RetrievedChunk]:
-        if document_ids is not None and not document_ids:
-            return []
-        kwargs: dict = {
+        query_kwargs: dict[str, Any] = {
             "query_embeddings": [embedding],
             "n_results": top_k,
             "include": ["documents", "metadatas", "distances"],
         }
-        if document_ids is not None:
-            kwargs["where"] = {"document_id": {"$in": document_ids}}
-        response = self.collection.query(**kwargs)
+        if doc_filter:
+            query_kwargs["where"] = {"document_id": {"$in": doc_filter}}
+        response = self.collection.query(**query_kwargs)
         ids = (response.get("ids") or [[]])[0]
         documents = (response.get("documents") or [[]])[0]
         metadatas = (response.get("metadatas") or [[]])[0]
@@ -126,6 +149,9 @@ class ChromaVectorStore:
             )
             for chunk_id, text, metadata, distance in zip(ids, documents, metadatas, distances, strict=False)
         ]
+
+    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]:
+        return []
 
 
 class DocumentRetriever:
@@ -145,10 +171,29 @@ class DocumentRetriever:
         self.vector_store.upsert(chunks, embeddings)
 
     def retrieve(
-        self, question: str, top_k: int | None = None, *, document_ids: list[str] | None = None
+        self,
+        question: str,
+        top_k: int | None = None,
+        *,
+        doc_filter: list[str] | None = None,
     ) -> list[RetrievedChunk]:
         query_embedding = self.embedding_backend.embed_texts([question])[0]
-        return self.vector_store.query(query_embedding, top_k or self.settings.default_top_k, document_ids=document_ids)
+        return self.vector_store.query(
+            query_embedding,
+            top_k or self.settings.default_top_k,
+            doc_filter=doc_filter or None,
+        )
+
+    def filter_by_relevance(self, query_embedding: list[float], threshold: float) -> list[str]:
+        descriptors = self.vector_store.get_all_descriptors(self.settings.processed_documents_dir)
+        matching: list[str] = []
+        for desc in descriptors:
+            emb = desc.get("summary_embedding")
+            if not emb:
+                continue
+            if _cosine_similarity(query_embedding, emb) >= threshold:
+                matching.append(str(desc["document_id"]))
+        return matching
 
     def index_processed_chunks(
         self,
