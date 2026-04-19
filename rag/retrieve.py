@@ -64,7 +64,7 @@ class JsonVectorStore:
 
     def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         scored: list[RetrievedChunk] = []
-        filter_set = set(doc_filter) if doc_filter else None
+        filter_set = set(doc_filter) if doc_filter is not None else None
         for row in self._load_rows():
             if filter_set is not None:
                 doc_id = row.get("metadata", {}).get("document_id")
@@ -83,7 +83,7 @@ class JsonVectorStore:
 
     def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         rows = self._load_rows()
-        filter_set = set(doc_filter) if doc_filter else None
+        filter_set = set(doc_filter) if doc_filter is not None else None
         chunk_ids: list[str] = []
         texts: list[str] = []
         metadatas: list[dict[str, Any]] = []
@@ -100,7 +100,7 @@ class JsonVectorStore:
         return index.query(query, top_k)
 
     def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        filter_set = set(doc_filter) if doc_filter else None
+        filter_set = set(doc_filter) if doc_filter is not None else None
         result: list[RetrievedChunk] = []
         for row in self._load_rows():
             if filter_set is not None:
