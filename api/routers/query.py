@@ -20,7 +20,7 @@ router = APIRouter(prefix="/query", tags=["query"])
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, description="The question to ask.")
     top_k: int = Field(default=4, ge=1, le=20, description="Number of chunks to retrieve (1-20).")
-    document_ids: list[str] | None = Field(
+    doc_filter: list[str] | None = Field(
         default=None, description="Limit search to these document IDs. Null searches all."
     )
 
@@ -66,7 +66,7 @@ async def query(request: Request, body: QueryRequest) -> JSONResponse:
             body.question,
             settings=settings,
             top_k=body.top_k,
-            document_ids=body.document_ids,
+            doc_filter=body.doc_filter,
         )
     except Exception as exc:
         logger.exception("Query failed: %r", body.question)
