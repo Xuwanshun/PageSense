@@ -162,7 +162,7 @@ jobs:
             --output text)
 
           echo "Testing http://${ALB_URL}/health"
-          curl --fail --silent --show-error --retry 5 --retry-delay 10 \
+          curl --fail --silent --show-error --retry 12 --retry-delay 15 --retry-all-errors \
             "http://${ALB_URL}/health"
 
           echo ""
