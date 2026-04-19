@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     # Cosine similarity threshold for doc-level pre-filtering at query time.
     # Queries are only searched against documents whose summary embedding
     # exceeds this threshold.
-    doc_filter_threshold: float = 0.60
+    doc_filter_threshold: float = 0.20
 
     # ── Query enhancement ─────────────────────────────────────────────────────
     # When enabled, simple queries are enhanced with HyDE (hypothetical document

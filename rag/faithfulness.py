@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from config import Settings
-from document_Process.clients import build_openai_client
+from document_process.clients import build_openai_client
 from rag.chunk import RetrievedChunk
 
 logger = logging.getLogger(__name__)

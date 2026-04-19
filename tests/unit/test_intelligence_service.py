@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from document_Process.intelligence_service import (
+from document_process.intelligence_service import (
     DocumentIntelligenceService,
     Section,
     _safe_parse_json,
 )
-from document_Process.models import BoundingBox, LayoutRegion, OrderedTextBlock
+from document_process.models import BoundingBox, LayoutRegion, OrderedTextBlock
 
 
 def _make_region(

@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
-from document_Process.clients import OpenAIJSONModelClient
-from document_Process.models import LayoutRegion, OrderedTextBlock
+from document_process.clients import OpenAIJSONModelClient
+from document_process.models import LayoutRegion, OrderedTextBlock
 
 logger = logging.getLogger(__name__)
 

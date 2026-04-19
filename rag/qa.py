@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
-from document_Process.clients import build_openai_client
+from document_process.clients import build_openai_client
 from rag.compress import ContextCompressor
 from rag.faithfulness import FaithfulnessChecker
 from rag.query_enhancement import classify_query, decompose_query, hyde_enhance

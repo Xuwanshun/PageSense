@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from config import Settings
-from document_Process.clients import build_openai_client
+from document_process.clients import build_openai_client
 from rag.chunk import RetrievedChunk
 from rag.hybrid import detect_query_type
 

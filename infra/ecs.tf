@@ -82,6 +82,17 @@ resource "aws_ecs_task_definition" "app" {
         { name = "FLAGS_enable_pir_in_executor", value = "0" },
         { name = "AWS_REGION",              value = var.aws_region },
         { name = "S3_BUCKET_NAME",          value = aws_s3_bucket.artifacts.bucket },
+
+        # ── Intelligence flags ────────────────────────────────────────────────
+        { name = "USE_DOCUMENT_INTELLIGENCE",  value = "true" },
+        { name = "USE_ADAPTIVE_CHUNKING",      value = "true" },
+        { name = "USE_VLM_SUMMARIES",          value = "true" },
+        { name = "USE_QUERY_ENHANCEMENT",      value = "true" },
+        { name = "USE_HYBRID_RETRIEVAL",       value = "true" },
+        { name = "USE_LLM_RERANKER",           value = "true" },
+        { name = "USE_CONTEXT_COMPRESSION",    value = "true" },
+        { name = "USE_FAITHFULNESS_CHECK",     value = "true" },
+        { name = "DOC_FILTER_THRESHOLD",       value = "0.20" },
       ]
 
       # Secrets: ECS pulls these from Secrets Manager at container startup

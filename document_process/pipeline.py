@@ -84,7 +84,7 @@ class DocumentPreprocessingPipeline:
             or self.settings.use_vlm_summaries
             or self.settings.use_adaptive_chunking
         ):
-            from document_Process.intelligence_service import DocumentIntelligenceService
+            from document_process.intelligence_service import DocumentIntelligenceService
 
             intel_service = DocumentIntelligenceService(self.settings)
             intel_result = intel_service.process(

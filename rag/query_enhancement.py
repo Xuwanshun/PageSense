@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from config import Settings
-from document_Process.clients import build_openai_client
+from document_process.clients import build_openai_client
 
 
 def classify_query(question: str, settings: Settings) -> str:
