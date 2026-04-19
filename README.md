@@ -35,6 +35,75 @@ OPENAI_BASE_URL=
 
 These directories are created automatically when the app runs.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Input
+        PDF[📄 PDF File]
+        CLI["CLI\npython main.py"]
+        HTTP["HTTP Client\n/api/documents"]
+    end
+
+    subgraph document_process["document_process/ — Stage 1: PDF → Artifacts"]
+        DL[DocumentLoaderService\nload + copy PDF]
+        OCR[OCRService\nPaddleOCR]
+        RO[ReadingOrderService\nresolve block order]
+        LD[LayoutDetectionService\nPP-DocLayout_plus-L]
+        AS[AssociationService\nlink text ↔ regions]
+        CR[CroppingService\ncrop tables & figures]
+        VLM["VLM Enrichment\ngpt-4o\n(USE_VLM_SUMMARIES=true)"]
+        ARTS["Frozen Artifacts\ndocument.json · chunks.json · crops/"]
+    end
+
+    subgraph rag["rag/ — Stage 2: Artifacts → Index → Answer"]
+        CH[chunk.py\nProcessedChunk → ChunkRecord]
+        EM[embed.py\nOpenAI text-embedding-3-small]
+        VS{"VectorStore\n(PREFER_CHROMA)"}
+        JVS[JsonVectorStore\nstore.json]
+        CVS[ChromaVectorStore]
+        QA[qa.py\ngpt-4.1-mini\nQAResponse + sources]
+    end
+
+    subgraph api["api/ — FastAPI HTTP Layer"]
+        APP[create_app factory]
+        HR[/health]
+        DR["/api/documents\nupload · list · delete"]
+        QR["/api/query\nPOST question"]
+        UI[Static Frontend]
+    end
+
+    subgraph infra["Infrastructure (AWS)"]
+        S3[(S3\nartifacts + vectorstore)]
+        ECS[ECS Fargate\n2 vCPU / 8 GB]
+        ALB[ALB]
+    end
+
+    PDF --> CLI
+    PDF --> DR
+    CLI --> DL
+    DR --> DL
+
+    DL --> OCR --> RO --> LD --> AS --> CR
+    CR --> VLM
+    CR --> ARTS
+    VLM --> ARTS
+
+    ARTS --> CH --> EM --> VS
+    VS -->|default| JVS
+    VS -->|opt-in| CVS
+    JVS --> QA
+    CVS --> QA
+
+    APP --> HR & DR & QR & UI
+    QR --> QA
+
+    ARTS <-->|sync| S3
+    JVS <-->|sync| S3
+    ECS --> APP
+    ALB --> ECS
+```
+
 ## Run
 
 Show CLI help:

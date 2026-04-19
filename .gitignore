@@ -1,6 +1,7 @@
 # ── Python ────────────────────────────────────────────────────────────────────
 .venv/
 venv/
+.venv.nosync/
 __pycache__/
 *.pyc
 *.pyo
@@ -56,6 +57,7 @@ doc_pro_test
 infra/.terraform/
 .claude.superpowers/
 .superpowers/
+
 
 # ── Paddle model weights ──────────────────────────────────────────────────────
 paddle_models/
