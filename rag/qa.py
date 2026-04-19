@@ -36,12 +36,12 @@ def answer_question_from_frozen_artifacts(
     *,
     settings: Settings | None = None,
     top_k: int | None = None,
+    doc_filter: list[str] | None = None,
 ) -> MultiAgentQAResponse:
     resolved_settings = settings or Settings()
     retriever = DocumentRetriever(resolved_settings)
 
-    doc_filter: list[str] | None = None
-    if resolved_settings.use_document_intelligence:
+    if doc_filter is None and resolved_settings.use_document_intelligence:
         query_embedding = retriever.embedding_backend.embed_texts([question])[0]
         matched_docs = retriever.filter_by_relevance(query_embedding, resolved_settings.doc_filter_threshold)
         if not matched_docs:
