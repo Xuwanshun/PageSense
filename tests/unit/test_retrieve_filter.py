@@ -64,7 +64,13 @@ def test_qa_passes_doc_filter_to_retriever(tmp_settings):
     ):
         answer_question_from_frozen_artifacts(
             "What is X?",
-            settings=tmp_settings.model_copy(update={"use_document_intelligence": False, "use_query_enhancement": False, "use_hybrid_retrieval": False}),
+            settings=tmp_settings.model_copy(
+                update={
+                    "use_document_intelligence": False,
+                    "use_query_enhancement": False,
+                    "use_hybrid_retrieval": False,
+                }
+            ),
             top_k=2,
         )
 

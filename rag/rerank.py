@@ -158,9 +158,7 @@ def _best_content(chunk: RetrievedChunk, visual_summaries: dict[str, Any]) -> st
     Return the most informative content string for a chunk.
     For table/figure chunks prefer the structured visual summary over raw OCR text.
     """
-    region_ids: list[str] = (
-        chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
-    )
+    region_ids: list[str] = chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
     for rid in region_ids:
         summary = visual_summaries.get(str(rid))
         if summary and summary.get("summary_text"):

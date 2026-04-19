@@ -118,9 +118,7 @@ def _format_source_passages(chunks: list[RetrievedChunk]) -> str:
         parent_title = chunk.metadata.get("parent_title") or ""
         region_types = chunk.metadata.get("region_types") or []
         region_label = "TABLE" if "table" in region_types else "FIGURE" if "figure" in region_types else "PROSE"
-        lines.append(
-            f"[CHUNK {chunk.chunk_id} | {region_label} | {parent_title}]\n{chunk.text}"
-        )
+        lines.append(f"[CHUNK {chunk.chunk_id} | {region_label} | {parent_title}]\n{chunk.text}")
     return "\n\n".join(lines)
 
 
@@ -128,11 +126,7 @@ def _format_problem_claims(claims: list[ClaimVerdict]) -> str:
     lines: list[str] = []
     for claim in claims:
         if claim.status in ("UNSUPPORTED", "INFERRED"):
-            lines.append(
-                f'Claim: "{claim.claim_text}"\n'
-                f"Status: {claim.status}\n"
-                f"Note: {claim.note or 'N/A'}"
-            )
+            lines.append(f'Claim: "{claim.claim_text}"\nStatus: {claim.status}\nNote: {claim.note or "N/A"}')
     return "\n\n".join(lines)
 
 

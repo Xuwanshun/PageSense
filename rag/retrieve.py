@@ -28,9 +28,7 @@ class VectorStore(Protocol):
         self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
     ) -> list[RetrievedChunk]: ...
 
-    def bm25_query(
-        self, query: str, top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]: ...
+    def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]: ...
 
     def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]: ...
 
@@ -243,12 +241,8 @@ class DocumentRetriever:
         fetch_k = k * 3  # over-fetch so fusion has enough candidates
 
         query_embedding = self.embedding_backend.embed_texts([question])[0]
-        dense_results = self.vector_store.query(
-            query_embedding, fetch_k, doc_filter=doc_filter or None
-        )
-        sparse_results = self.vector_store.bm25_query(
-            question, fetch_k, doc_filter=doc_filter or None
-        )
+        dense_results = self.vector_store.query(query_embedding, fetch_k, doc_filter=doc_filter or None)
+        sparse_results = self.vector_store.bm25_query(question, fetch_k, doc_filter=doc_filter or None)
 
         fused = rrf_fuse(dense_results, sparse_results)
         fused = apply_region_boost(fused, question)

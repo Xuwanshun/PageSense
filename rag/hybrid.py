@@ -143,9 +143,7 @@ class BM25Index:
                 idf = math.log((n - df + 0.5) / (df + 0.5) + 1.0)
                 tf = tf_map.get(token, 0)
                 numerator = tf * (self.k1 + 1.0)
-                denominator = tf + self.k1 * (
-                    1.0 - self.b + self.b * doc_len / self._avg_dl
-                )
+                denominator = tf + self.k1 * (1.0 - self.b + self.b * doc_len / self._avg_dl)
                 score += idf * numerator / denominator
 
             scored.append((score, idx))
@@ -196,9 +194,7 @@ def rrf_fuse(
     for chunk_id, chunk in all_ids.items():
         dr = dense_rank.get(chunk_id)
         sr = sparse_rank.get(chunk_id)
-        rrf_score = (1.0 / (rrf_k + dr) if dr else 0.0) + (
-            1.0 / (rrf_k + sr) if sr else 0.0
-        )
+        rrf_score = (1.0 / (rrf_k + dr) if dr else 0.0) + (1.0 / (rrf_k + sr) if sr else 0.0)
         fused.append(
             RetrievedChunk(
                 chunk_id=chunk.chunk_id,
@@ -326,9 +322,7 @@ def expand_to_parent_context(
         section_hits.setdefault(key, []).append(chunk)
 
     # Sections that meet the threshold → fetch all siblings from all_chunks
-    expand_keys: set[tuple] = {
-        key for key, hits in section_hits.items() if len(hits) >= sibling_threshold
-    }
+    expand_keys: set[tuple] = {key for key, hits in section_hits.items() if len(hits) >= sibling_threshold}
 
     if not expand_keys:
         return top_chunks

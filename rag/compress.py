@@ -68,9 +68,7 @@ def _primary_region_type(chunk: RetrievedChunk) -> str:
 
 
 def _best_content(chunk: RetrievedChunk, visual_summaries: dict[str, Any]) -> str:
-    region_ids: list[str] = (
-        chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
-    )
+    region_ids: list[str] = chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
     for rid in region_ids:
         summary = visual_summaries.get(str(rid))
         if summary and summary.get("summary_text"):
@@ -136,8 +134,7 @@ class ContextCompressor:
             client = build_openai_client(self.settings)
             return client.generate_text(
                 system_prompt=(
-                    "You are a context distiller. "
-                    "Respond only with the compressed passages in the specified format."
+                    "You are a context distiller. Respond only with the compressed passages in the specified format."
                 ),
                 user_prompt=user_prompt,
             ).strip()
