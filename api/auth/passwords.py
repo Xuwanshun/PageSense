@@ -1,11 +1,11 @@
-from passlib.context import CryptContext
+import bcrypt
 
-_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_ROUNDS = 12
 
 
 def hash_password(password: str) -> str:
-    return _ctx.hash(password, rounds=12)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=_ROUNDS)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _ctx.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
