@@ -147,6 +147,18 @@ class Settings(BaseSettings):
     # Adds two LLM API calls per query when issues are found; disable in tests.
     use_faithfulness_check: bool = False
 
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    jwt_secret_key: str | None = None
+    jwt_algorithm: str = "HS256"
+    database_url: str = "sqlite:///data/auth.db"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+    https_only: bool = False
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+
     # ── AWS / S3 ─────────────────────────────────────────────────────────────
     # Set S3_BUCKET_NAME when running on AWS to persist processed artifacts
     # and the vector store across container restarts (ECS tasks are ephemeral).
@@ -168,3 +180,12 @@ def ensure_data_dirs(settings: Settings) -> None:
     settings.vectorstore_dir.mkdir(parents=True, exist_ok=True)
     settings.paddle_cache_dir.mkdir(parents=True, exist_ok=True)
     (settings.paddle_cache_dir / "temp").mkdir(parents=True, exist_ok=True)
+
+
+def user_scoped_settings(settings: Settings, user_id: str) -> Settings:
+    """Return a copy of settings with all data dirs scoped under user_id/."""
+    return settings.model_copy(update={
+        "raw_documents_dir": settings.raw_documents_dir / user_id,
+        "processed_documents_dir": settings.processed_documents_dir / user_id,
+        "vectorstore_dir": settings.vectorstore_dir / user_id,
+    })

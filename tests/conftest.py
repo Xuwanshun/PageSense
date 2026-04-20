@@ -47,5 +47,7 @@ def tmp_settings(tmp_path):
         openai_api_key="sk-test-fake-key-for-unit-tests",
         openai_base_url=None,
         s3_bucket_name=None,
-        log_level="WARNING",  # suppress log noise in tests
+        log_level="WARNING",
+        jwt_secret_key="test-secret-key-for-unit-tests",
+        database_url=f"sqlite:///{tmp_path}/auth.db",
     )
