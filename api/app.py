@@ -31,10 +31,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
-from api.routers import documents, health, query
+from api.routers import auth, documents, health, query
 from config import Settings, ensure_data_dirs
 from logging_config import configure_logging
 
@@ -55,6 +56,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.info("Starting RAG API server")
 
         ensure_data_dirs(resolved_settings)
+
+        from db.engine import create_tables, make_engine
+        engine = make_engine(resolved_settings.database_url)
+        create_tables(engine)
+        app.state.db_engine = engine
+        logger.info("Database ready: %s", resolved_settings.database_url)
 
         # In-memory job tracker for upload pipeline status
         # Keys: document_id, Values: {"status", "error", "chunk_count", "page_count", "source_filename"}
@@ -85,11 +92,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    if resolved_settings.jwt_secret_key:
+        app.add_middleware(SessionMiddleware, secret_key=resolved_settings.jwt_secret_key)
+
     app.state.settings = resolved_settings
 
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(query.router)
+
+    @app.get("/login", include_in_schema=False)
+    async def login_page():
+        return FileResponse(STATIC_DIR / "login.html")
 
     # Serve the main UI at /
     @app.get("/", include_in_schema=False)
