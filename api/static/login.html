@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF RAG — Sign In</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg, #0f1117); }
+      .auth-card { background: var(--surface, #1a1d27); border: 1px solid var(--border, #2a2d3a); border-radius: 12px; padding: 2rem; width: 100%; max-width: 400px; }
+      .auth-card__title { font-family: 'Sora', sans-serif; font-size: 1.4rem; font-weight: 700; margin-bottom: 1.5rem; color: var(--text, #e8eaf0); }
+      .auth-tabs { display: flex; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border, #2a2d3a); }
+      .auth-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 0.5rem 1rem; cursor: pointer; font-family: 'Sora', sans-serif; font-size: 0.9rem; color: var(--text-muted, #6b7280); margin-bottom: -1px; }
+      .auth-tab.active { border-bottom-color: var(--accent, #6c8ef5); color: var(--text, #e8eaf0); }
+      .auth-form { display: flex; flex-direction: column; gap: 0.75rem; }
+      .auth-form input { background: var(--input-bg, #12141e); border: 1px solid var(--border, #2a2d3a); border-radius: 6px; color: var(--text, #e8eaf0); font-family: 'IBM Plex Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.9rem; }
+      .auth-form input:focus { outline: none; border-color: var(--accent, #6c8ef5); }
+      .auth-btn { background: var(--accent, #6c8ef5); border: none; border-radius: 6px; color: #fff; cursor: pointer; font-family: 'Sora', sans-serif; font-size: 0.95rem; font-weight: 600; padding: 0.7rem; margin-top: 0.25rem; }
+      .auth-btn:hover { opacity: 0.9; }
+      .auth-divider { text-align: center; color: var(--text-muted, #6b7280); font-size: 0.8rem; margin: 0.75rem 0; }
+      .oauth-btn { display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: none; border: 1px solid var(--border, #2a2d3a); border-radius: 6px; color: var(--text, #e8eaf0); cursor: pointer; font-family: 'Sora', sans-serif; font-size: 0.9rem; padding: 0.6rem; text-decoration: none; }
+      .oauth-btn:hover { border-color: var(--accent, #6c8ef5); }
+      .auth-error { background: #3b1a1a; border: 1px solid #7f2020; border-radius: 6px; color: #f87171; font-size: 0.85rem; padding: 0.5rem 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <div class="auth-card">
+      <p class="auth-card__title">PDF RAG — Document Q&amp;A</p>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="signin">Sign In</button>
+        <button class="auth-tab" data-tab="register">Register</button>
+      </div>
+      <div id="auth-error" class="auth-error" hidden></div>
+      <form class="auth-form" id="auth-form" novalidate>
+        <input type="email" id="email" placeholder="Email" autocomplete="email" required />
+        <input type="password" id="password" placeholder="Password (min 8 chars)" autocomplete="current-password" required />
+        <button type="submit" class="auth-btn" id="submit-btn">Sign In</button>
+      </form>
+      <div class="auth-divider">or</div>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <a class="oauth-btn" href="/auth/oauth/google">Continue with Google</a>
+        <a class="oauth-btn" href="/auth/oauth/github">Continue with GitHub</a>
+      </div>
+    </div>
+    <script type="module" src="./login.js"></script>
+  </body>
+</html>
