@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from api.dependencies import get_current_user
+from config import user_scoped_settings
 from document_process.pipeline import preprocess_document
 from rag.retrieve import index_all_processed_documents
 
@@ -76,11 +77,12 @@ async def preprocess(request: Request, file: UploadFile, user: dict = Depends(ge
     1-2 minutes to return. The connection must stay open.
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    dest = settings.raw_documents_dir / file.filename
+    dest = scoped.raw_documents_dir / file.filename
     logger.info("Saving uploaded file: %s", dest)
     try:
         with dest.open("wb") as out:
@@ -94,18 +96,18 @@ async def preprocess(request: Request, file: UploadFile, user: dict = Depends(ge
         # remains free to answer ALB health checks during long processing.
         # Without this, 48-page PDFs take >90s and ECS kills the task.
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, lambda: preprocess_document(dest, settings=settings, force=True))
+        result = await loop.run_in_executor(None, lambda: preprocess_document(dest, settings=scoped, force=True))
     except Exception as exc:
         logger.exception("Preprocessing failed for %s", dest)
         raise HTTPException(status_code=500, detail=f"Preprocessing failed: {exc}") from exc
 
     logger.info("Preprocessing complete: document_id=%s chunks=%d", result.document_id, result.chunk_count)
 
-    if settings.s3_bucket_name:
+    if scoped.s3_bucket_name:
         from storage.s3 import sync_processed_to_s3
 
         try:
-            sync_processed_to_s3(settings)
+            sync_processed_to_s3(scoped)
         except Exception as exc:
             # S3 sync failure is not fatal — artifacts are still on local disk.
             logger.warning("S3 sync after preprocess failed: %s", exc)
@@ -131,20 +133,21 @@ async def build_index(request: Request, user: dict = Depends(get_current_user)) 
     Response: {"indexed_documents": N, "total_chunks": M}
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
 
-    if not settings.openai_api_key:
+    if not scoped.openai_api_key:
         raise HTTPException(
             status_code=422,
             detail="OPENAI_API_KEY is required for indexing. Set it in your environment.",
         )
 
-    store_path = settings.vectorstore_dir / "store.json"
+    store_path = scoped.vectorstore_dir / "store.json"
     if store_path.exists():
         store_path.unlink()
 
     logger.info("Building vector index from preprocessed documents")
     try:
-        indexed = index_all_processed_documents(settings=settings)
+        indexed = index_all_processed_documents(settings=scoped)
     except Exception as exc:
         logger.exception("Indexing failed")
         raise HTTPException(status_code=500, detail=f"Indexing failed: {exc}") from exc
@@ -152,11 +155,11 @@ async def build_index(request: Request, user: dict = Depends(get_current_user)) 
     total_chunks = sum(indexed.values())
     logger.info("Indexing complete: %d documents, %d chunks", len(indexed), total_chunks)
 
-    if settings.s3_bucket_name:
+    if scoped.s3_bucket_name:
         from storage.s3 import sync_embedded_to_s3
 
         try:
-            sync_embedded_to_s3(settings)
+            sync_embedded_to_s3(scoped)
         except Exception as exc:
             logger.warning("S3 sync after index failed: %s", exc)
 
@@ -175,6 +178,7 @@ async def list_documents(request: Request, user: dict = Depends(get_current_user
     Return all documents — in-progress jobs and ready artifacts on disk.
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
     jobs: dict = request.app.state.jobs
     documents = []
     seen: set[str] = set()
@@ -194,7 +198,7 @@ async def list_documents(request: Request, user: dict = Depends(get_current_user
         )
 
     # Ready documents from filesystem (not in active jobs, e.g. from previous server runs)
-    processed_dir = settings.processed_documents_dir
+    processed_dir = scoped.processed_documents_dir
     if processed_dir.exists():
         for doc_dir in sorted(p for p in processed_dir.iterdir() if p.is_dir()):
             document_id = doc_dir.name
@@ -229,13 +233,14 @@ async def upload(request: Request, file: UploadFile, user: dict = Depends(get_cu
     Poll GET /documents/status/{document_id} every 3 s to track progress.
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
     jobs: dict = request.app.state.jobs
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
-    dest = settings.raw_documents_dir / file.filename
-    settings.raw_documents_dir.mkdir(parents=True, exist_ok=True)
+    scoped.raw_documents_dir.mkdir(parents=True, exist_ok=True)
+    dest = scoped.raw_documents_dir / file.filename
     logger.info("Saving uploaded file: %s", dest)
     try:
         with dest.open("wb") as out:
@@ -255,7 +260,7 @@ async def upload(request: Request, file: UploadFile, user: dict = Depends(get_cu
 
     thread = threading.Thread(
         target=_run_pipeline,
-        args=(dest, settings, jobs, document_id),
+        args=(dest, scoped, jobs, document_id),
         daemon=True,
     )
     thread.start()
@@ -271,6 +276,7 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
     Status values: preprocessing | indexing | ready | error
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
     jobs: dict = request.app.state.jobs
 
     if document_id in jobs:
@@ -286,8 +292,8 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
         )
 
     # Fall back to filesystem for docs processed before this server run
-    doc_dir = (settings.processed_documents_dir / document_id).resolve()
-    if not str(doc_dir).startswith(str(settings.processed_documents_dir.resolve())):
+    doc_dir = (scoped.processed_documents_dir / document_id).resolve()
+    if not str(doc_dir).startswith(str(scoped.processed_documents_dir.resolve())):
         raise HTTPException(status_code=400, detail="Invalid document_id.")
     if not doc_dir.exists():
         raise HTTPException(status_code=404, detail=f"Document {document_id!r} not found.")

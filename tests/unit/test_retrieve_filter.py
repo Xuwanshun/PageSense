@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from api.routers.auth import _rate_limiter
 from rag.qa import MultiAgentQAResponse, answer_question_from_frozen_artifacts
 from rag.retrieve import JsonVectorStore
 
@@ -78,6 +79,7 @@ def test_qa_passes_doc_filter_to_retriever(tmp_settings):
 
 
 def test_query_endpoint_forwards_question(tmp_settings):
+    _rate_limiter._hits.clear()
     app = create_app(tmp_settings)
     mock_response = MultiAgentQAResponse(
         question="test?",
@@ -88,8 +90,12 @@ def test_query_endpoint_forwards_question(tmp_settings):
     )
     with patch("api.routers.query.answer_question_from_frozen_artifacts", return_value=mock_response) as mock_fn:
         with TestClient(app) as client:
+            # Register a user and obtain a token for auth
+            r = client.post("/auth/register", json={"email": "query@example.com", "password": "password123"})
+            token = r.json()["access_token"]
             client.post(
                 "/query",
                 json={"question": "test?", "top_k": 2},
+                headers={"Authorization": f"Bearer {token}"},
             )
         mock_fn.assert_called_once()
