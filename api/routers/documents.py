@@ -17,9 +17,10 @@ import shutil
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from api.dependencies import get_current_user
 from document_process.pipeline import preprocess_document
 from rag.retrieve import index_all_processed_documents
 
@@ -61,7 +62,7 @@ def _run_pipeline(
 
 
 @router.post("/preprocess")
-async def preprocess(request: Request, file: UploadFile) -> JSONResponse:
+async def preprocess(request: Request, file: UploadFile, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Upload a PDF and run OCR + layout detection + chunking on it.
 
@@ -120,7 +121,7 @@ async def preprocess(request: Request, file: UploadFile) -> JSONResponse:
 
 
 @router.post("/index")
-async def build_index(request: Request) -> JSONResponse:
+async def build_index(request: Request, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Build the vector index from all preprocessed document artifacts.
 
@@ -169,7 +170,7 @@ async def build_index(request: Request) -> JSONResponse:
 
 
 @router.get("")
-async def list_documents(request: Request) -> JSONResponse:
+async def list_documents(request: Request, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Return all documents — in-progress jobs and ready artifacts on disk.
     """
@@ -220,7 +221,7 @@ async def list_documents(request: Request) -> JSONResponse:
 
 
 @router.post("/upload")
-async def upload(request: Request, file: UploadFile) -> JSONResponse:
+async def upload(request: Request, file: UploadFile, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Upload a PDF and automatically run preprocess + index in the background.
 
@@ -263,7 +264,7 @@ async def upload(request: Request, file: UploadFile) -> JSONResponse:
 
 
 @router.get("/status/{document_id}")
-async def document_status(document_id: str, request: Request) -> JSONResponse:
+async def document_status(document_id: str, request: Request, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Return the current pipeline status for a document.
 

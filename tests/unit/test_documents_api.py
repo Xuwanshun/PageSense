@@ -9,13 +9,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from api.routers.auth import _rate_limiter
 
 
 @pytest.fixture
 def client(tmp_settings):
+    # Reset the rate limiter before each test
+    _rate_limiter._hits.clear()
+
     app = create_app(tmp_settings)
     tmp_settings.processed_documents_dir.mkdir(parents=True, exist_ok=True)
     with TestClient(app) as c:
+        # Register and get a token
+        r = c.post("/auth/register", json={"email": "test@example.com", "password": "password123"})
+        token = r.json()["access_token"]
+        c.headers = {"Authorization": f"Bearer {token}"}
         yield c
 
 
