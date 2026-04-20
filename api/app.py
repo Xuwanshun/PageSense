@@ -63,6 +63,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.db_engine = engine
         logger.info("Database ready: %s", resolved_settings.database_url)
 
+        from api.auth.oauth import register_providers
+        register_providers(
+            resolved_settings.google_client_id,
+            resolved_settings.google_client_secret,
+            resolved_settings.github_client_id,
+            resolved_settings.github_client_secret,
+        )
+
         # In-memory job tracker for upload pipeline status
         # Keys: document_id, Values: {"status", "error", "chunk_count", "page_count", "source_filename"}
         app.state.jobs = {}

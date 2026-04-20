@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, insert, select
 
+from api.auth.oauth import oauth
 from api.auth.passwords import hash_password, verify_password
 from api.auth.rate_limit import RateLimiter
 from api.auth.tokens import create_access_token, create_refresh_token
@@ -179,3 +180,75 @@ async def logout(
             conn.commit()
     response.delete_cookie("refresh_token")
     return {"ok": True}
+
+
+def _oauth_upsert_user(engine, settings, response: Response,
+                        email: str, provider: str, sub: str) -> RedirectResponse:
+    now = datetime.now(timezone.utc)
+    with engine.connect() as conn:
+        row = conn.execute(select(users).where(users.c.email == email)).first()
+        if row:
+            user_id = row.id
+        else:
+            user_id = str(uuid.uuid4())
+            conn.execute(insert(users).values(
+                id=user_id, email=email, hashed_password=None,
+                oauth_provider=provider, oauth_sub=sub,
+                created_at=now, is_active=True,
+            ))
+        access_token = create_access_token(
+            user_id, settings.jwt_secret_key, settings.jwt_algorithm,
+            settings.access_token_expire_minutes,
+        )
+        raw_refresh, token_hash = create_refresh_token()
+        conn.execute(insert(refresh_tokens).values(
+            token_hash=token_hash, user_id=user_id,
+            expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+        ))
+        conn.commit()
+    redirect = RedirectResponse(url=f"/#token={access_token}")
+    _set_refresh_cookie(redirect, raw_refresh, settings)
+    return redirect
+
+
+@router.get("/oauth/google")
+async def google_login(request: Request):
+    redirect_uri = str(request.url_for("google_callback"))
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/oauth/google/callback", name="google_callback")
+async def google_callback(request: Request, response: Response):
+    settings = request.app.state.settings
+    engine = request.app.state.db_engine
+    token = await oauth.google.authorize_access_token(request)
+    user_info = token.get("userinfo") or {}
+    email = user_info.get("email", "").lower().strip()
+    sub = user_info.get("sub", "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Could not get email from Google")
+    return _oauth_upsert_user(engine, settings, response, email, "google", sub)
+
+
+@router.get("/oauth/github")
+async def github_login(request: Request):
+    redirect_uri = str(request.url_for("github_callback"))
+    return await oauth.github.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/oauth/github/callback", name="github_callback")
+async def github_callback(request: Request, response: Response):
+    settings = request.app.state.settings
+    engine = request.app.state.db_engine
+    token = await oauth.github.authorize_access_token(request)
+    resp = await oauth.github.get("user", token=token)
+    user_info = resp.json()
+    email = (user_info.get("email") or "").lower().strip()
+    if not email:
+        emails_resp = await oauth.github.get("user/emails", token=token)
+        primary = next((e for e in emails_resp.json() if e.get("primary")), None)
+        email = (primary["email"] if primary else "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Could not get email from GitHub")
+    sub = str(user_info.get("id", ""))
+    return _oauth_upsert_user(engine, settings, response, email, "github", sub)
