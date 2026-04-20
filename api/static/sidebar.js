@@ -6,7 +6,7 @@ const POLL_INTERVAL_MS = 3000;
  * @param {{ onSelectionChange: (ids: Set<string>) => void }} opts
  * @returns {{ loadExisting: (docs: Array) => void }}
  */
-export function initSidebar({ onSelectionChange }) {
+export function initSidebar({ onSelectionChange, authedFetch }) {
   const selectedIds = new Set();
   const selectedNames = new Map(); // document_id -> source_filename
   const pollingTimers = new Map(); // document_id -> intervalId
@@ -45,7 +45,7 @@ export function initSidebar({ onSelectionChange }) {
     const formData = new FormData();
     formData.append('file', file);
 
-    fetch('/documents/upload', { method: 'POST', body: formData })
+    authedFetch('/documents/upload', { method: 'POST', body: formData })
       .then((r) => r.json())
       .then(({ document_id, status }) => {
         addOrUpdateCard(document_id, file.name, status, null, null);
@@ -70,7 +70,7 @@ export function initSidebar({ onSelectionChange }) {
   }
 
   function poll(document_id) {
-    fetch(`/documents/status/${document_id}`)
+    authedFetch(`/documents/status/${document_id}`)
       .then((r) => r.json())
       .then(({ status, error, chunk_count, page_count }) => {
         const card = docCards.get(document_id);
