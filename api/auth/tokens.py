@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 
@@ -8,7 +8,7 @@ import jwt
 def create_access_token(
     user_id: str, secret_key: str, algorithm: str, expire_minutes: int
 ) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=expire_minutes)
     return jwt.encode(
         {"sub": user_id, "exp": expire, "type": "access"},
         secret_key,

@@ -1,6 +1,8 @@
 import time
+
+import jwt
 import pytest
-import jwt as pyjwt
+
 from api.auth.tokens import create_access_token, create_refresh_token, verify_access_token
 
 SECRET = "test-secret"
@@ -14,14 +16,14 @@ def test_access_token_roundtrip():
 
 def test_access_token_wrong_secret_rejected():
     token = create_access_token("user-123", SECRET, ALGO, expire_minutes=15)
-    with pytest.raises(Exception):
+    with pytest.raises(jwt.PyJWTError):
         verify_access_token(token, "wrong-secret", ALGO)
 
 
 def test_access_token_expired_rejected():
     token = create_access_token("user-123", SECRET, ALGO, expire_minutes=0)
     time.sleep(1)
-    with pytest.raises(Exception):
+    with pytest.raises(jwt.PyJWTError):
         verify_access_token(token, SECRET, ALGO)
 
 

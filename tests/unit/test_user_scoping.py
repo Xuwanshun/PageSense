@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from config import Settings, user_scoped_settings
 
 

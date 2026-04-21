@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -58,7 +58,7 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
 
     settings = request.app.state.settings
     engine = request.app.state.db_engine
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     with engine.connect() as conn:
         if conn.execute(select(users).where(users.c.email == body.email)).first():
@@ -94,7 +94,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
 
     settings = request.app.state.settings
     engine = request.app.state.db_engine
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     with engine.connect() as conn:
         row = conn.execute(select(users).where(users.c.email == body.email)).first()
@@ -133,7 +133,7 @@ async def refresh_token(
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
     settings = request.app.state.settings
     engine = request.app.state.db_engine
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     with engine.connect() as conn:
         row = conn.execute(
@@ -144,7 +144,7 @@ async def refresh_token(
 
         expires_at = row.expires_at
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
         if expires_at < now:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
 
@@ -184,7 +184,7 @@ async def logout(
 
 def _oauth_upsert_user(engine, settings, response: Response,
                         email: str, provider: str, sub: str) -> RedirectResponse:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with engine.connect() as conn:
         row = conn.execute(select(users).where(users.c.email == email)).first()
         if row:

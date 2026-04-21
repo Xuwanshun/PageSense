@@ -1,5 +1,6 @@
 import pytest
 from starlette.testclient import TestClient
+
 from api.app import create_app
 from api.routers.auth import _rate_limiter
 from config import Settings

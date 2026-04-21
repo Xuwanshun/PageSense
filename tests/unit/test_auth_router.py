@@ -1,5 +1,6 @@
 import pytest
 from starlette.testclient import TestClient
+
 from api.app import create_app
 from config import Settings
 
@@ -59,7 +60,7 @@ def test_login_unknown_email_returns_401(client):
 
 
 def test_refresh_token_sets_cookie_and_returns_new_access_token(client):
-    r = client.post("/auth/register", json={"email": "e@example.com", "password": "password123"})
+    client.post("/auth/register", json={"email": "e@example.com", "password": "password123"})
     assert "refresh_token" in client.cookies
     r2 = client.post("/auth/refresh")
     assert r2.status_code == 200
