@@ -107,7 +107,15 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "OPENAI_API_KEY"
           valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.app_name}/openai-api-key"
-        }
+        },
+        {
+          name      = "JWT_SECRET_KEY"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.app_name}/jwt-secret-key"
+        },
+        {
+          name      = "DATABASE_URL"
+          valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.app_name}/database-url"
+        },
       ]
 
       mountPoints = []

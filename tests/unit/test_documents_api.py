@@ -5,17 +5,29 @@ import io
 import json
 from unittest.mock import patch
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from api.routers.auth import _rate_limiter
 
 
 @pytest.fixture
 def client(tmp_settings):
+    # Reset the rate limiter before each test
+    _rate_limiter._hits.clear()
+
     app = create_app(tmp_settings)
     tmp_settings.processed_documents_dir.mkdir(parents=True, exist_ok=True)
     with TestClient(app) as c:
+        # Register and get a token
+        r = c.post("/auth/register", json={"email": "test@example.com", "password": "password123"})
+        token = r.json()["access_token"]
+        c.headers = {"Authorization": f"Bearer {token}"}
+        # Decode the token to get the user_id for user-scoped directory creation
+        payload = jwt.decode(token, options={"verify_signature": False})
+        c.user_id = payload["sub"]
         yield c
 
 
@@ -26,7 +38,7 @@ def test_list_documents_empty(client):
 
 
 def test_list_documents_returns_ready_docs(client, tmp_settings):
-    doc_dir = tmp_settings.processed_documents_dir / "my_doc"
+    doc_dir = tmp_settings.processed_documents_dir / client.user_id / "my_doc"
     doc_dir.mkdir(parents=True)
     (doc_dir / "document.json").write_text(
         json.dumps({"source_filename": "my_doc.pdf", "page_count": 10}), encoding="utf-8"
@@ -89,7 +101,7 @@ def test_upload_starts_pipeline_and_returns_document_id(client, tmp_settings):
 
 
 def test_status_returns_ready_from_filesystem(client, tmp_settings):
-    doc_dir = tmp_settings.processed_documents_dir / "fs_doc"
+    doc_dir = tmp_settings.processed_documents_dir / client.user_id / "fs_doc"
     doc_dir.mkdir(parents=True)
     (doc_dir / "document.json").write_text(
         json.dumps({"source_filename": "fs_doc.pdf", "page_count": 5}), encoding="utf-8"

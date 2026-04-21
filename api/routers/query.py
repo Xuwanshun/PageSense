@@ -7,10 +7,12 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from api.dependencies import get_current_user
+from config import user_scoped_settings
 from rag.qa import answer_question_from_frozen_artifacts
 
 logger = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ class QueryRequest(BaseModel):
 
 
 @router.post("")
-async def query(request: Request, body: QueryRequest) -> JSONResponse:
+async def query(request: Request, body: QueryRequest, user: dict = Depends(get_current_user)) -> JSONResponse:
     """
     Ask a question against the indexed PDF corpus.
 
@@ -52,8 +54,9 @@ async def query(request: Request, body: QueryRequest) -> JSONResponse:
         }
     """
     settings = request.app.state.settings
+    scoped = user_scoped_settings(settings, user["id"])
 
-    if not settings.openai_api_key:
+    if not scoped.openai_api_key:
         raise HTTPException(
             status_code=422,
             detail="OPENAI_API_KEY is required for queries. Set it in your environment.",
@@ -64,7 +67,7 @@ async def query(request: Request, body: QueryRequest) -> JSONResponse:
     try:
         response = answer_question_from_frozen_artifacts(
             body.question,
-            settings=settings,
+            settings=scoped,
             top_k=body.top_k,
             doc_filter=body.doc_filter,
         )

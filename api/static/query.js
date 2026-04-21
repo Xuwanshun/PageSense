@@ -3,7 +3,7 @@
 /**
  * @param {{ getSelectedIds: () => Set<string> }} opts
  */
-export function initQuery({ getSelectedIds }) {
+export function initQuery({ getSelectedIds, authedFetch }) {
   const queryTagsEl = document.getElementById('query-tags');
   const chatHistoryEl = document.getElementById('chat-history');
   const questionInput = document.getElementById('question-input');
@@ -92,10 +92,10 @@ export function initQuery({ getSelectedIds }) {
     askBtn.textContent = '…';
 
     try {
-      const r = await fetch('/query', {
+      const r = await authedFetch('/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, top_k: 4, document_ids: [...ids] }),
+        body: JSON.stringify({ question, top_k: 4, doc_filter: [...ids] }),
       });
       const data = await r.json();
       if (!r.ok) {
