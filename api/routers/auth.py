@@ -65,25 +65,37 @@ async def register(body: RegisterRequest, request: Request, response: Response) 
             raise HTTPException(status_code=409, detail="Email already registered")
 
         user_id = str(uuid.uuid4())
-        conn.execute(insert(users).values(
-            id=user_id, email=body.email,
-            hashed_password=hash_password(body.password),
-            created_at=now, is_active=True,
-        ))
+        conn.execute(
+            insert(users).values(
+                id=user_id,
+                email=body.email,
+                hashed_password=hash_password(body.password),
+                created_at=now,
+                is_active=True,
+            )
+        )
         access_token = create_access_token(
-            user_id, settings.jwt_secret_key, settings.jwt_algorithm,
+            user_id,
+            settings.jwt_secret_key,
+            settings.jwt_algorithm,
             settings.access_token_expire_minutes,
         )
         raw_refresh, token_hash = create_refresh_token()
-        conn.execute(insert(refresh_tokens).values(
-            token_hash=token_hash, user_id=user_id,
-            expires_at=now + timedelta(days=settings.refresh_token_expire_days),
-        ))
+        conn.execute(
+            insert(refresh_tokens).values(
+                token_hash=token_hash,
+                user_id=user_id,
+                expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+            )
+        )
         conn.commit()
 
     _set_refresh_cookie(response, raw_refresh, settings)
-    return {"access_token": access_token, "token_type": "bearer",
-            "expires_in": settings.access_token_expire_minutes * 60}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": settings.access_token_expire_minutes * 60,
+    }
 
 
 @router.post("/login")
@@ -105,26 +117,35 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     access_token = create_access_token(
-        row.id, settings.jwt_secret_key, settings.jwt_algorithm,
+        row.id,
+        settings.jwt_secret_key,
+        settings.jwt_algorithm,
         settings.access_token_expire_minutes,
     )
     raw_refresh, token_hash = create_refresh_token()
 
     with engine.connect() as conn:
-        conn.execute(insert(refresh_tokens).values(
-            token_hash=token_hash, user_id=row.id,
-            expires_at=now + timedelta(days=settings.refresh_token_expire_days),
-        ))
+        conn.execute(
+            insert(refresh_tokens).values(
+                token_hash=token_hash,
+                user_id=row.id,
+                expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+            )
+        )
         conn.commit()
 
     _set_refresh_cookie(response, raw_refresh, settings)
-    return {"access_token": access_token, "token_type": "bearer",
-            "expires_in": settings.access_token_expire_minutes * 60}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": settings.access_token_expire_minutes * 60,
+    }
 
 
 @router.post("/refresh")
 async def refresh_token(
-    request: Request, response: Response,
+    request: Request,
+    response: Response,
     refresh_token: str | None = Cookie(default=None),
 ) -> dict:
     if not refresh_token:
@@ -136,9 +157,7 @@ async def refresh_token(
     now = datetime.now(UTC)
 
     with engine.connect() as conn:
-        row = conn.execute(
-            select(refresh_tokens).where(refresh_tokens.c.token_hash == token_hash)
-        ).first()
+        row = conn.execute(select(refresh_tokens).where(refresh_tokens.c.token_hash == token_hash)).first()
         if row is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
@@ -152,24 +171,33 @@ async def refresh_token(
         conn.execute(delete(refresh_tokens).where(refresh_tokens.c.token_hash == token_hash))
 
         access_token = create_access_token(
-            user_id, settings.jwt_secret_key, settings.jwt_algorithm,
+            user_id,
+            settings.jwt_secret_key,
+            settings.jwt_algorithm,
             settings.access_token_expire_minutes,
         )
         raw_refresh, new_hash = create_refresh_token()
-        conn.execute(insert(refresh_tokens).values(
-            token_hash=new_hash, user_id=user_id,
-            expires_at=now + timedelta(days=settings.refresh_token_expire_days),
-        ))
+        conn.execute(
+            insert(refresh_tokens).values(
+                token_hash=new_hash,
+                user_id=user_id,
+                expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+            )
+        )
         conn.commit()
 
     _set_refresh_cookie(response, raw_refresh, settings)
-    return {"access_token": access_token, "token_type": "bearer",
-            "expires_in": settings.access_token_expire_minutes * 60}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": settings.access_token_expire_minutes * 60,
+    }
 
 
 @router.post("/logout")
 async def logout(
-    request: Request, response: Response,
+    request: Request,
+    response: Response,
     refresh_token: str | None = Cookie(default=None),
 ) -> dict:
     if refresh_token:
@@ -182,8 +210,7 @@ async def logout(
     return {"ok": True}
 
 
-def _oauth_upsert_user(engine, settings, response: Response,
-                        email: str, provider: str, sub: str) -> RedirectResponse:
+def _oauth_upsert_user(engine, settings, response: Response, email: str, provider: str, sub: str) -> RedirectResponse:
     now = datetime.now(UTC)
     with engine.connect() as conn:
         row = conn.execute(select(users).where(users.c.email == email)).first()
@@ -191,20 +218,31 @@ def _oauth_upsert_user(engine, settings, response: Response,
             user_id = row.id
         else:
             user_id = str(uuid.uuid4())
-            conn.execute(insert(users).values(
-                id=user_id, email=email, hashed_password=None,
-                oauth_provider=provider, oauth_sub=sub,
-                created_at=now, is_active=True,
-            ))
+            conn.execute(
+                insert(users).values(
+                    id=user_id,
+                    email=email,
+                    hashed_password=None,
+                    oauth_provider=provider,
+                    oauth_sub=sub,
+                    created_at=now,
+                    is_active=True,
+                )
+            )
         access_token = create_access_token(
-            user_id, settings.jwt_secret_key, settings.jwt_algorithm,
+            user_id,
+            settings.jwt_secret_key,
+            settings.jwt_algorithm,
             settings.access_token_expire_minutes,
         )
         raw_refresh, token_hash = create_refresh_token()
-        conn.execute(insert(refresh_tokens).values(
-            token_hash=token_hash, user_id=user_id,
-            expires_at=now + timedelta(days=settings.refresh_token_expire_days),
-        ))
+        conn.execute(
+            insert(refresh_tokens).values(
+                token_hash=token_hash,
+                user_id=user_id,
+                expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+            )
+        )
         conn.commit()
     redirect = RedirectResponse(url=f"/#token={access_token}")
     _set_refresh_cookie(redirect, raw_refresh, settings)

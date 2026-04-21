@@ -5,9 +5,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 
 
-def create_access_token(
-    user_id: str, secret_key: str, algorithm: str, expire_minutes: int
-) -> str:
+def create_access_token(user_id: str, secret_key: str, algorithm: str, expire_minutes: int) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=expire_minutes)
     return jwt.encode(
         {"sub": user_id, "exp": expire, "type": "access"},

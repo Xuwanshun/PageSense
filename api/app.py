@@ -58,12 +58,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ensure_data_dirs(resolved_settings)
 
         from db.engine import create_tables, make_engine
+
         engine = make_engine(resolved_settings.database_url)
         create_tables(engine)
         app.state.db_engine = engine
         logger.info("Database ready: %s", resolved_settings.database_url)
 
         from api.auth.oauth import register_providers
+
         register_providers(
             resolved_settings.google_client_id,
             resolved_settings.google_client_secret,

@@ -184,8 +184,10 @@ def ensure_data_dirs(settings: Settings) -> None:
 
 def user_scoped_settings(settings: Settings, user_id: str) -> Settings:
     """Return a copy of settings with all data dirs scoped under user_id/."""
-    return settings.model_copy(update={
-        "raw_documents_dir": settings.raw_documents_dir / user_id,
-        "processed_documents_dir": settings.processed_documents_dir / user_id,
-        "vectorstore_dir": settings.vectorstore_dir / user_id,
-    })
+    return settings.model_copy(
+        update={
+            "raw_documents_dir": settings.raw_documents_dir / user_id,
+            "processed_documents_dir": settings.processed_documents_dir / user_id,
+            "vectorstore_dir": settings.vectorstore_dir / user_id,
+        }
+    )

@@ -23,13 +23,9 @@ async def get_current_user(
     if not settings.jwt_secret_key:
         raise HTTPException(status_code=500, detail="Auth not configured: JWT_SECRET_KEY missing")
     try:
-        user_id = verify_access_token(
-            credentials.credentials, settings.jwt_secret_key, settings.jwt_algorithm
-        )
+        user_id = verify_access_token(credentials.credentials, settings.jwt_secret_key, settings.jwt_algorithm)
     except jwt.PyJWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
     engine = request.app.state.db_engine
     with engine.connect() as conn:
         row = conn.execute(select(users).where(users.c.id == user_id)).first()
