@@ -1,13 +1,4 @@
-"""
-Entry point for the RAG-Agent application.
-
-Supports two modes:
-  CLI mode   — python main.py --preprocess / --index / --ask "question"
-  Server mode — python main.py --serve   (or APP_MODE=api in the environment)
-
-The CLI mode is unchanged from the original design, so existing workflows
-continue to work without modification.
-"""
+"""Entry point for the RAG-Agent CLI."""
 
 from __future__ import annotations
 
@@ -39,19 +30,10 @@ def main() -> None:
     parser.add_argument(
         "--force-preprocess", action="store_true", help="Re-run preprocessing even if artifacts already exist."
     )
-    parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="Start the FastAPI HTTP server instead of running a CLI command.",
-    )
     args = parser.parse_args()
 
-    if args.serve or settings.app_mode == "api":
-        _run_server(settings)
-        return
-
     if not args.preprocess and not args.index and not args.ask:
-        parser.error("Specify at least one of: --preprocess, --index, --ask, --serve")
+        parser.error("Specify at least one of: --preprocess, --index, --ask")
 
     ensure_data_dirs(settings)
 
@@ -89,33 +71,6 @@ def main() -> None:
                     f"score={source.get('score'):.4f}  file={source.get('source_filename')}  "
                     f"regions={source.get('region_ids')}"
                 )
-
-
-def _run_server(settings: Settings) -> None:
-    """
-    Start the FastAPI + uvicorn HTTP server.
-
-    This is the entry point used in Docker and on AWS (ECS Fargate).
-    uvicorn is a production-quality ASGI server.
-    """
-    try:
-        import uvicorn
-    except ImportError:
-        print(
-            "uvicorn is not installed. Run: pip install 'uvicorn[standard]'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from api.app import create_app
-
-    app = create_app(settings=settings)
-    uvicorn.run(
-        app,
-        host="0.0.0.0",  # noqa: S104  bind to all interfaces inside the container
-        port=8000,
-        log_config=None,  # disable uvicorn's own logging setup; we already configured it
-    )
 
 
 if __name__ == "__main__":

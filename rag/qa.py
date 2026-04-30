@@ -8,6 +8,10 @@ from typing import Any
 
 from config import Settings
 from document_Process.clients import build_openai_client
+from rag.compress import ContextCompressor
+from rag.faithfulness import FaithfulnessChecker
+from rag.query_enhancement import classify_query, decompose_query, hyde_enhance
+from rag.rerank import LLMReranker
 from rag.retrieve import DocumentRetriever, RetrievedChunk
 
 
@@ -35,11 +39,76 @@ def answer_question_from_frozen_artifacts(
 ) -> MultiAgentQAResponse:
     resolved_settings = settings or Settings()
     retriever = DocumentRetriever(resolved_settings)
-    retrieved = _rerank_chunks(
-        question, retriever.retrieve(question, top_k=(top_k or resolved_settings.default_top_k) * 2)
-    )
-    retrieved = retrieved[: top_k or resolved_settings.default_top_k]
-    visual_summaries = _load_visual_summaries(resolved_settings, retrieved)
+
+    doc_filter: list[str] | None = None
+    if resolved_settings.use_document_intelligence:
+        query_embedding = retriever.embedding_backend.embed_texts([question])[0]
+        matched_docs = retriever.filter_by_relevance(query_embedding, resolved_settings.doc_filter_threshold)
+        if not matched_docs:
+            return MultiAgentQAResponse(
+                question=question,
+                answer="No relevant documents found in the corpus for this question.",
+                sources=[],
+                router={
+                    "use_table_agent": False,
+                    "use_figure_agent": False,
+                    "table_regions": [],
+                    "figure_regions": [],
+                },
+                specialists=[],
+            )
+        doc_filter = matched_docs
+
+    fetch_k = (top_k or resolved_settings.default_top_k) * 2
+
+    if resolved_settings.use_hybrid_retrieval:
+        # Hybrid path: BM25 + dense fusion with RRF, region boost, parent expansion.
+        # Query enhancement (HyDE / decomposition) still applies to the dense leg
+        # so we run it first to get the best query text, then delegate to
+        # hybrid_retrieve which handles both legs internally.
+        if resolved_settings.use_query_enhancement:
+            query_type = classify_query(question, resolved_settings)
+            effective_query = (
+                decompose_query(question, resolved_settings)[0]
+                if query_type == "complex"
+                else hyde_enhance(question, resolved_settings)
+            )
+        else:
+            effective_query = question
+        raw_chunks = retriever.hybrid_retrieve(
+            effective_query,
+            top_k=fetch_k,
+            doc_filter=doc_filter,
+        )
+    elif resolved_settings.use_query_enhancement:
+        query_type = classify_query(question, resolved_settings)
+        if query_type == "complex":
+            sub_queries = decompose_query(question, resolved_settings)
+            seen_ids: set[str] = set()
+            raw_chunks = []
+            for sub_q in sub_queries:
+                for chunk in retriever.retrieve(sub_q, top_k=fetch_k, doc_filter=doc_filter):
+                    if chunk.chunk_id not in seen_ids:
+                        seen_ids.add(chunk.chunk_id)
+                        raw_chunks.append(chunk)
+        else:
+            hypothetical = hyde_enhance(question, resolved_settings)
+            raw_chunks = retriever.retrieve(hypothetical, top_k=fetch_k, doc_filter=doc_filter)
+    else:
+        raw_chunks = retriever.retrieve(question, top_k=fetch_k, doc_filter=doc_filter)
+
+    # First-pass lightweight rerank (token overlap boost)
+    raw_chunks = _rerank_chunks(question, raw_chunks)
+    raw_chunks = raw_chunks[: top_k or resolved_settings.default_top_k]
+
+    # Second-pass LLM rerank (precision filter) — loads visual summaries first
+    # so table/figure descriptions are available to the reranker
+    visual_summaries = _load_visual_summaries(resolved_settings, raw_chunks)
+    if resolved_settings.use_llm_reranker:
+        reranker = LLMReranker(resolved_settings)
+        retrieved = reranker.rerank(question, raw_chunks, visual_summaries=visual_summaries)
+    else:
+        retrieved = raw_chunks
     router = _route_question(question, retrieved, visual_summaries)
     specialists: list[SpecialistResult] = []
     if router["use_table_agent"] and router["table_regions"]:
@@ -50,7 +119,26 @@ def answer_question_from_frozen_artifacts(
         specialists.append(
             _run_specialist("figure", question, router["figure_regions"], visual_summaries, resolved_settings)
         )
-    answer = _synthesize_answer(question, retrieved, specialists, resolved_settings)
+    # Optional context compression — reduces token usage for synthesis
+    compressed_context: str | None = None
+    if resolved_settings.use_context_compression:
+        compressor = ContextCompressor(resolved_settings)
+        compressed_context = compressor.compress(
+            question,
+            retrieved,
+            visual_summaries=visual_summaries,
+            compression_threshold=resolved_settings.compression_threshold,
+        )
+
+    answer = _synthesize_answer(question, retrieved, specialists, resolved_settings, compressed_context)
+
+    # Optional faithfulness check — verifies and corrects unsupported claims
+    if resolved_settings.use_faithfulness_check:
+        checker = FaithfulnessChecker(resolved_settings)
+        faith_result = checker.check(question, retrieved, answer)
+        if faith_result.recommended_action != "return_as_is":
+            answer = checker.correct(question, answer, faith_result, retrieved)
+
     return MultiAgentQAResponse(
         question=question,
         answer=answer,
@@ -130,18 +218,22 @@ def _synthesize_answer(
     retrieved: list[RetrievedChunk],
     specialists: list[SpecialistResult],
     settings: Settings,
+    compressed_context: str | None = None,
 ) -> str:
     client = build_openai_client(settings)
-    sources = []
-    for index, chunk in enumerate(retrieved, start=1):
-        sources.append(
-            f"[Source {index} chunk={chunk.chunk_id} page={chunk.metadata.get('page_number')} "
-            f"regions={chunk.metadata.get('source_region_ids') or chunk.metadata.get('region_ids', [])}]\n{chunk.text}"
-        )
+    if compressed_context is not None:
+        evidence_text = compressed_context
+    else:
+        sources = []
+        for index, chunk in enumerate(retrieved, start=1):
+            sources.append(
+                f"[Source {index} chunk={chunk.chunk_id} page={chunk.metadata.get('page_number')} "
+                f"regions={chunk.metadata.get('source_region_ids') or chunk.metadata.get('region_ids', [])}]\n{chunk.text}"
+            )
+        evidence_text = "\n\n".join(sources)
     specialist_sections = [
         f"[{item.agent_name} agent regions={item.region_ids}]\n{item.output}" for item in specialists
     ]
-    evidence_text = "\n\n".join(sources)
     specialist_text = "\n\n".join(specialist_sections) if specialist_sections else "None"
     return client.generate_text(
         system_prompt=(

@@ -28,17 +28,21 @@ from document_Process.models import (
     OrderedTextBlock,
     ProcessedChunk,
 )
-from document_Process.services import (
-    AssociationService,
-    ReadingOrderService,
-    _best_region_match,
+from document_Process.stages.stage1_load_detect import (
     _compute_crop_box,
     _dedupe_regions,
-    _reading_order_key,
     _region_type_for_label,
-    build_chunks,
-    build_visual_summaries,
 )
+from document_Process.stages.stage2_reading_order import (
+    ReadingOrderService,
+    _reading_order_key,
+)
+from document_Process.stages.stage4_hierarchy import (
+    AssociationService,
+    _best_region_match,
+)
+from document_Process.stages.stage5_chunking import build_chunks
+from document_Process.stages.stage6_export import build_visual_summaries
 
 # ── Lightweight factory helpers ───────────────────────────────────────────────
 

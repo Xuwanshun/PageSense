@@ -1,40 +1,29 @@
 # ── Development and testing dependencies ─────────────────────────────────────
-# This file is used in CI (GitHub Actions) and by developers.
-# It intentionally does NOT include paddlepaddle/paddleocr/paddlex because
-# those are ~3.5 GB and would make CI impractically slow.
-#
-# Usage:
-#   pip install -r requirements-dev.txt
-#
-# Paddle-dependent tests are skipped in CI automatically:
+# Does NOT include paddlepaddle/paddleocr/paddlex (too large for dev installs).
+# Paddle-dependent tests are skipped automatically:
 #   @pytest.mark.skipif(not os.getenv("PADDLE_AVAILABLE"), reason="paddle not installed")
-#
-# To run all tests including Paddle-dependent ones (on a machine with Paddle):
+# To run all tests including Paddle-dependent ones:
 #   PADDLE_AVAILABLE=1 pytest
 
-# Include the non-Paddle production dependencies
+# Production dependencies (non-Paddle)
 pydantic>=2.10,<3
 pydantic-settings>=2.0,<3
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 python-multipart>=0.0.9,<1
 python-json-logger>=2.0,<3
-boto3>=1.34,<2
 openai>=2.30,<3
-# Note: pypdfium2 and Pillow are included because some unit tests use them.
 pypdfium2>=4.30,<5
 Pillow>=10.0,<12
 
 # ── Testing ───────────────────────────────────────────────────────────────────
-# pytest: test runner
 pytest>=8.0,<9
-# pytest-cov: generates test coverage reports
 pytest-cov>=5.0,<6
-# pytest-asyncio: lets pytest run async test functions (needed for FastAPI tests)
 pytest-asyncio>=0.23,<1
-# httpx: HTTP client used by FastAPI's TestClient
 httpx>=0.27,<1
+# pytest-watch: re-runs tests automatically when source files change
+# Usage: ptw tests/unit/  or just: ptw
+pytest-watch>=4.2,<5
 
 # ── Linting and formatting ────────────────────────────────────────────────────
-# ruff: extremely fast Python linter + formatter (replaces flake8, isort, black)
 ruff>=0.4,<1

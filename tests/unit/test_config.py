@@ -32,39 +32,24 @@ def test_settings_defaults():
     assert s.embedding_model == "text-embedding-3-small"
     assert s.log_level == "INFO"
     assert s.log_format == "text"
-    assert s.app_mode == "cli"
-    assert s.s3_bucket_name is None
 
 
 def test_settings_reads_from_env_vars(monkeypatch):
-    """
-    Settings should pick up values from environment variables.
-
-    monkeypatch is a pytest built-in that temporarily sets env vars for
-    the duration of this test, then restores them automatically.
-    """
+    """Settings should pick up values from environment variables."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-from-env")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-    monkeypatch.setenv("S3_BUCKET_NAME", "my-test-bucket")
     monkeypatch.setenv("DEFAULT_TOP_K", "8")
 
     s = Settings()
     assert s.openai_api_key == "sk-test-from-env"
     assert s.openai_model == "gpt-4o"
     assert s.log_level == "DEBUG"
-    assert s.s3_bucket_name == "my-test-bucket"
     assert s.default_top_k == 8
 
 
 def test_settings_construction_has_no_side_effects(tmp_path, monkeypatch):
-    """
-    Constructing Settings must NOT create directories or write files.
-
-    The original code created data directories inside __post_init__,
-    which meant importing Settings in any test would modify the filesystem.
-    Now construction is pure — ensure_data_dirs() must be called explicitly.
-    """
+    """Constructing Settings must NOT create directories or write files."""
     data_dir = tmp_path / "data"
     monkeypatch.setenv("RAW_DOCUMENTS_DIR", str(data_dir / "raw"))
     monkeypatch.setenv("PROCESSED_DOCUMENTS_DIR", str(data_dir / "processed"))

@@ -1,38 +1,6 @@
-"""
-VLM (vision-language model) enrichment for cropped region summaries.
+"""Backward-compat shim — preserves document_Process.vlm import path for tests.
 
-WHY THIS EXISTS
----------------
-The OCR pipeline extracts text from pages and assigns nearby text to each
-detected table or figure as its "summary". This works when a table has a
-clear caption, but fails for:
-
-  • Charts / graphs — pixels only, no extractable text describing the trend
-  • Complex tables  — OCR text is garbled without column/row context
-  • Diagrams        — structural meaning is entirely visual
-
-A vision-language model (GPT-4o) can look at the saved crop image and
-produce a natural-language description that is:
-  1. Semantically accurate (it understands what the chart shows)
-  2. Embeddable (dense enough to match user queries like "revenue growth")
-  3. Grounded (it sees the actual data, not just nearby labels)
-
-USAGE
------
-Enable in config:  USE_VLM_SUMMARIES=true  (disabled by default — costs money)
-Model:             VLM_MODEL=gpt-4o        (default)
-
-The function `enrich_summaries_with_vlm` is called from the preprocessing
-pipeline after `build_visual_summaries`. Each summary with a saved crop
-image gets a VLM-generated description. Failures are non-fatal — the
-original OCR-text summary is kept on error.
-
-PROMPT DESIGN FOR RAG
-----------------------
-The prompts are written to produce descriptions that match the kinds of
-questions users actually ask. Instead of "this is a bar chart", the model
-is instructed to mention the topic, specific values, trends, and conclusions
-— the things a user would type into a search box.
+Real VLM logic lives in document_Process/stages/stage3_visual.py.
 """
 
 from __future__ import annotations
@@ -40,151 +8,72 @@ from __future__ import annotations
 import base64
 import logging
 from pathlib import Path
-from typing import Any
 
 from config import Settings
 from document_Process.models import VisualRegionSummary
 
 logger = logging.getLogger(__name__)
 
-# Prompts tuned for RAG retrieval quality: we want descriptions that match
-# the vocabulary of user questions, not generic chart-type labels.
-#
-# Each prompt instructs the model to return SKIP when the image has no
-# meaningful content for retrieval (logos, icons, decorative elements).
-# This sentinel is parsed in _describe_crop to set is_meaningful=False.
-_SKIP_SENTINEL = "SKIP"
-
-_MEANINGLESS_INSTRUCTION = (
-    "IMPORTANT: If the image is a logo, icon, product photo, watermark, decorative "
-    "element, or any purely visual brand mark that contains no information useful for "
-    "answering questions (e.g., a company logo, chip photograph, geometric decoration, "
-    "UI button), respond with exactly the word SKIP and nothing else."
-)
+_PLACEHOLDER_PREFIXES = ("Detected ", "detected ")
 
 _SYSTEM_PROMPTS: dict[str, str] = {
     "table": (
-        "You are a document analysis assistant preparing table descriptions for a "
-        "retrieval-augmented generation (RAG) system. "
-        "Describe the table concisely but completely: its topic, column and row headers, "
-        "key data values, units of measurement, time periods covered, and any notable "
-        "trends or conclusions visible in the data. "
-        "Write in plain prose. Do not use markdown. "
-        "Focus on information users would search for. " + _MEANINGLESS_INSTRUCTION
+        "You are an expert data analyst. Describe this table image concisely: "
+        "what data it contains, its structure, and key values. "
+        "If the image is decorative or not a real table, respond with exactly: SKIP"
     ),
     "figure": (
-        "You are a document analysis assistant preparing figure descriptions for a "
-        "retrieval-augmented generation (RAG) system. "
-        "Describe the figure concisely but completely: the type of visualisation "
-        "(line chart, bar chart, diagram, photograph, etc.), its topic, axis labels and "
-        "units if visible, key data points or trends, and any conclusions the figure "
-        "supports. "
-        "Write in plain prose. Do not use markdown. "
-        "Focus on information users would search for. " + _MEANINGLESS_INSTRUCTION
+        "You are an expert visual analyst. Describe this figure or chart image concisely: "
+        "what it shows, the type of chart, and key insights. "
+        "If the image is decorative or not meaningful, respond with exactly: SKIP"
+    ),
+    "chart": (
+        "You are an expert data analyst. Describe this chart image concisely: "
+        "the chart type, data shown, trends, and key findings. "
+        "If the image is decorative or not meaningful, respond with exactly: SKIP"
+    ),
+    "image": (
+        "You are an expert visual analyst. Describe what this image shows concisely. "
+        "If the image is decorative, a logo, or not meaningful for document understanding, "
+        "respond with exactly: SKIP"
     ),
 }
-
-
-def enrich_summaries_with_vlm(
-    summaries: list[VisualRegionSummary],
-    *,
-    settings: Settings,
-) -> list[VisualRegionSummary]:
-    """
-    Replace text-fallback summaries with VLM-generated descriptions.
-
-    Only processes summaries that have a saved crop image on disk.
-    Failures are logged as warnings and the original summary is kept.
-    Returns a new list — the input summaries are not mutated.
-    """
-    enriched: list[VisualRegionSummary] = []
-    for summary in summaries:
-        crop = Path(summary.crop_path) if summary.crop_path else None
-        if crop and crop.exists():
-            try:
-                description, is_meaningful = _describe_crop(
-                    crop_path=crop,
-                    region_type=summary.region_type,
-                    context_text=summary.summary_text,
-                    settings=settings,
-                )
-                if is_meaningful:
-                    summary = summary.model_copy(update={"summary_text": description})
-                    logger.info(
-                        "VLM description generated for %s (%s, %d chars)",
-                        summary.region_id,
-                        summary.region_type,
-                        len(description),
-                    )
-                else:
-                    summary = summary.model_copy(update={"is_meaningful": False})
-                    logger.info(
-                        "VLM marked %s as not meaningful (logo/icon) — excluded from RAG",
-                        summary.region_id,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "VLM description failed for %s — keeping OCR-text fallback: %s",
-                    summary.region_id,
-                    exc,
-                )
-        else:
-            logger.debug(
-                "Skipping VLM for %s — no crop image available",
-                summary.region_id,
-            )
-        enriched.append(summary)
-    return enriched
+_DEFAULT_SYSTEM_PROMPT = _SYSTEM_PROMPTS["image"]
 
 
 def _describe_crop(
-    crop_path: Path,
+    crop_path: str | Path,
     region_type: str,
     context_text: str,
     settings: Settings,
 ) -> tuple[str, bool]:
-    """
-    Call the OpenAI vision API with the cropped image.
+    """Call the VLM to get a description of a cropped region image.
 
-    Returns (description, is_meaningful). When the VLM determines the image
-    is a logo, icon, or decorative element with no retrieval value, it responds
-    with the SKIP sentinel and is_meaningful is False.
-
-    The surrounding OCR text (context_text) is included as a hint when it
-    contains real content, so the model can anchor its description to the
-    document's own language.
+    Returns (description, is_meaningful). If the model returns "SKIP",
+    is_meaningful is False and description is "".
     """
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for VLM summaries.")
+        raise RuntimeError("OPENAI_API_KEY is required for VLM descriptions")
 
-    # Lazy import so the rest of the app does not depend on openai at import time
-    from openai import OpenAI  # type: ignore
+    import openai
 
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
-    image_b64 = base64.b64encode(crop_path.read_bytes()).decode()
+    crop_path = Path(crop_path)
+    image_bytes = crop_path.read_bytes()
+    b64 = base64.b64encode(image_bytes).decode()
+    data_url = f"data:image/png;base64,{b64}"
 
-    system_prompt = _SYSTEM_PROMPTS.get(region_type, _SYSTEM_PROMPTS["figure"])
-    user_content: list[dict[str, Any]] = []
+    system_prompt = _SYSTEM_PROMPTS.get(region_type, _DEFAULT_SYSTEM_PROMPT)
 
-    # Only pass context when it is real text, not the placeholder fallback.
-    if context_text and not context_text.startswith("Detected "):
-        user_content.append(
-            {
-                "type": "text",
-                "text": f"Surrounding document text for context:\n{context_text[:400]}",
-            }
-        )
+    user_content: list[dict] = []
+    is_placeholder = any(context_text.startswith(p) for p in _PLACEHOLDER_PREFIXES)
+    if context_text.strip() and not is_placeholder:
+        user_content.append({"type": "text", "text": f"Context text near this region:\n{context_text}"})
+    user_content.append({"type": "image_url", "image_url": {"url": data_url}})
 
-    user_content.append(
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/png;base64,{image_b64}",
-                "detail": "high",  # use high-detail mode for tables with small text
-            },
-        }
+    client = openai.OpenAI(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url or None,
     )
-
     response = client.chat.completions.create(
         model=settings.vlm_model,
         messages=[
@@ -192,9 +81,46 @@ def _describe_crop(
             {"role": "user", "content": user_content},
         ],
         max_tokens=512,
-        temperature=0,
     )
-    raw = (response.choices[0].message.content or "").strip()
-    if raw.upper() == _SKIP_SENTINEL:
-        return ("", False)
-    return (raw, True)
+    text = (response.choices[0].message.content or "").strip()
+    if text.strip().upper() == "SKIP":
+        return "", False
+    return text, True
+
+
+def enrich_summaries_with_vlm(
+    summaries: list[VisualRegionSummary],
+    *,
+    settings: Settings,
+) -> list[VisualRegionSummary]:
+    """Enrich VisualRegionSummary objects with VLM descriptions where crops exist.
+
+    Returns a new list; input summaries are not mutated.
+    """
+    results: list[VisualRegionSummary] = []
+    for summary in summaries:
+        if not summary.crop_path or not Path(summary.crop_path).exists():
+            results.append(summary.model_copy())
+            continue
+
+        try:
+            description, is_meaningful = _describe_crop(
+                summary.crop_path,
+                summary.region_type,
+                summary.summary_text,
+                settings,
+            )
+        except Exception as exc:
+            logger.warning("VLM description failed for %s: %s", summary.region_id, exc)
+            results.append(summary.model_copy())
+            continue
+
+        updated = summary.model_copy(
+            update={
+                "is_meaningful": is_meaningful,
+                "summary_text": description if is_meaningful else summary.summary_text,
+            }
+        )
+        results.append(updated)
+
+    return results

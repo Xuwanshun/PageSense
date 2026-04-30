@@ -20,18 +20,12 @@ Required env vars: `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL`.
 python main.py --preprocess            # OCR + freeze artifacts from data/raw/
 python main.py --index                 # build vector index from frozen artifacts
 python main.py --ask "your question"   # query against the index
-
-# API server (local)
-python main.py --serve                 # starts FastAPI on port 8000
-# or: APP_MODE=api python main.py --serve
-
-# Docker
-docker-compose up --build              # first build (~20 min — downloads Paddle models)
-docker-compose up                      # subsequent starts
+python main.py --force-preprocess      # re-run preprocessing even if artifacts exist
 
 # Tests
 pytest                                 # run all tests
 pytest tests/unit/test_chunk.py        # run a single test file
+ptw                                    # auto-run tests on file changes
 
 # Lint
 ruff check .
@@ -40,10 +34,7 @@ ruff format .
 
 ## Architecture
 
-Two entry points share the same core pipeline:
-
-- **CLI** (`python main.py --preprocess/--index/--ask`) — for batch use
-- **API server** (`python main.py --serve` or `APP_MODE=api`) — FastAPI on port 8000, used in Docker/AWS ECS
+Single CLI entry point (`python main.py --preprocess/--index/--ask`).
 
 **Pipeline flow (3 stages):**
 
@@ -57,17 +48,7 @@ Two entry points share the same core pipeline:
    - `embed.py`: OpenAI `text-embedding-3-small` via `EmbeddingBackend`
    - `retrieve.py`: `DocumentRetriever` + `JsonVectorStore` (default) or `ChromaVectorStore` (opt-in via `PREFER_CHROMA=true`) + `answer_question()` calls OpenAI `gpt-4.1-mini`
 
-3. **`api/`** — FastAPI HTTP layer
-   - `app.py`: factory function `create_app(settings)` — use this pattern for tests
-   - `routers/`: `health`, `documents`, `query`, `showcase`
-   - On startup: syncs artifacts from S3 if `S3_BUCKET_NAME` is set (ECS stateless pattern)
-   - Serves static frontend from `api/static/`
-
 **Configuration** (`config.py`): `Settings` (pydantic-settings) reads all config from env vars / `.env`. Never call `os.getenv()` — always use `Settings`. `ensure_data_dirs(settings)` is called at startup, not inside `Settings.__init__`, so `Settings()` is safe to construct in tests without side effects.
-
-**Storage** (`storage/`): S3 sync for ECS deployments — processed artifacts and the vector store are persisted to/loaded from S3 so containers are stateless.
-
-**Infra** (`infra/`): Terraform for AWS — ECS Fargate, ECR, ALB, EFS, S3, IAM.
 
 ## Testing Notes
 
@@ -75,3 +56,4 @@ Two entry points share the same core pipeline:
 - Use the `tmp_settings` fixture (from `conftest.py`) for any test that needs a `Settings` object — it points all data dirs at a temp directory
 - Paddle-dependent tests must be guarded: `@pytest.mark.skipif(not os.getenv("PADDLE_AVAILABLE"), reason="paddle not installed")` — Paddle is not in `requirements-dev.txt`
 - `asyncio_mode = "auto"` is set in `pyproject.toml` so async test functions work without extra decorators
+- Run `ptw` to automatically re-run tests whenever source files change

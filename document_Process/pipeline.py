@@ -1,24 +1,37 @@
+"""
+document_Process pipeline — PDF/image → frozen artifacts
+=========================================================
+
+Six-stage flow (DocumentPreprocessingPipeline.run):
+
+  1. LoadDetectStage       — SHA-256 ID, PDF render, OCR, layout detection, region cropping
+  2. ReadingOrderStage     — LTR/RTL/TTB sort with multi-column detection
+  3. VisualUnderstandingStage — async VLM descriptions with tiered detail
+  4. HierarchyStage        — title propagation, block grouping, section tree
+  5. ChunkingStage         — async hierarchical chunking + LLM summarization
+  6. ExportStage           — all artifacts to data/processed/<document_id>/
+
+Idempotency: preprocess_document() short-circuits when all artifacts already
+exist (unless force=True).  Per-stage caching (StageCache) skips individual
+stages when their inputs have not changed.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from config import Settings
-from document_Process.models import ProcessingIssue
-from document_Process.services import (
-    AssociationService,
-    CroppingService,
-    DocumentLoaderService,
-    LayoutDetectionService,
-    OCRService,
-    ReadingOrderService,
-    build_chunks,
-    build_document_artifacts,
-    build_visual_summaries,
-    export_artifacts,
-)
+from document_Process.cache import StageCache
+from document_Process.stages.stage1_load_detect import LoadDetectStage
+from document_Process.stages.stage2_reading_order import ReadingOrderStage
+from document_Process.stages.stage3_visual import VisualUnderstandingStage
+from document_Process.stages.stage4_hierarchy import HierarchyStage
+from document_Process.stages.stage5_chunking import ChunkingStage
+from document_Process.stages.stage6_export import ExportStage
 
 logger = logging.getLogger(__name__)
 
@@ -28,115 +41,92 @@ class PreprocessingResult:
     document_id: str
     working_dir: Path
     document_json_path: Path
+    structured_json_path: Path
     page_count: int
     chunk_count: int
     warnings: list[str]
 
 
 class DocumentPreprocessingPipeline:
-    """Input -> PaddleOCR -> reading order -> Paddle layout -> crop -> frozen artifacts."""
+    """Wires the six preprocessing stages with per-stage caching."""
 
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        loader: DocumentLoaderService | None = None,
-        ocr: OCRService | None = None,
-        reading_order: ReadingOrderService | None = None,
-        layout: LayoutDetectionService | None = None,
-        association: AssociationService | None = None,
-        cropping: CroppingService | None = None,
-    ) -> None:
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.loader = loader or DocumentLoaderService(settings)
-        self.ocr = ocr or OCRService()
-        self.reading_order = reading_order or ReadingOrderService()
-        self.layout = layout or LayoutDetectionService()
-        self.association = association or AssociationService()
-        self.cropping = cropping or CroppingService()
+        self.stage1 = LoadDetectStage(settings)
+        self.stage2 = ReadingOrderStage(settings)
+        self.stage3 = VisualUnderstandingStage(settings)
+        self.stage4 = HierarchyStage()
+        self.stage5 = ChunkingStage(settings)
+        self.stage6 = ExportStage()
 
     def run(self, source_path: Path, *, document_id: str | None = None) -> PreprocessingResult:
-        logger.info("Starting document preprocessing for %s", source_path)
-        loaded = self.loader.load(source_path, document_id=document_id)
-        issues: list[ProcessingIssue] = []
+        logger.info("Starting document preprocessing: %s", source_path)
 
-        ocr_pages, ocr_issues = self.ocr.extract(loaded.pages)
-        issues.extend(ocr_issues)
+        # Stage 1 (sync) — always runs first to establish working_dir and document_id
+        s1 = self.stage1.run(source_path, document_id=document_id)
+        cache = StageCache(s1.working_dir) if self.settings.stage_cache_enabled else _NoCache()
 
-        reading_order, order_issues = self.reading_order.resolve(ocr_pages)
-        issues.extend(order_issues)
+        # Stage 2 (sync)
+        s2_key = self.stage2.cache_key(s1)
+        if cache.is_hit(self.stage2.stage_name, s2_key):
+            logger.info("Stage 2 cache hit — skipping reading order")
+            # Re-run cheaply (no Paddle calls) to rebuild in-memory result
+            s2 = self.stage2.run(s1)
+        else:
+            s2 = self.stage2.run(s1)
+            cache.write(self.stage2.stage_name, s2_key)
 
-        regions, layout_issues, layout_model = self.layout.detect(loaded.pages, ocr_pages)
-        issues.extend(layout_issues)
+        # Stage 3 (async)
+        s3_key = self.stage3.cache_key(s1, s2)
+        if cache.is_hit(self.stage3.stage_name, s3_key):
+            logger.info("Stage 3 cache hit — skipping VLM")
+            s3 = asyncio.run(self.stage3.run(s1, s2))
+        else:
+            s3 = asyncio.run(self.stage3.run(s1, s2))
+            cache.write(self.stage3.stage_name, s3_key)
 
-        associations, ordered_blocks, ordered_text = self.association.associate(ocr_pages, reading_order, regions)
+        # Stage 4 (sync)
+        s4_key = self.stage4.cache_key(s1, s2, s3)
+        if cache.is_hit(self.stage4.stage_name, s4_key):
+            logger.info("Stage 4 cache hit — skipping hierarchy")
+            s4 = self.stage4.run(s1, s2, s3)
+        else:
+            s4 = self.stage4.run(s1, s2, s3)
+            cache.write(self.stage4.stage_name, s4_key)
 
-        cropped_assets, crop_issues = self.cropping.crop_visual_regions(
-            pages=loaded.pages,
-            regions=regions,
-            output_dir=loaded.working_dir / "crops",
-        )
-        issues.extend(crop_issues)
+        # Stage 5 (async)
+        s5_key = self.stage5.cache_key(s1, s4)
+        if cache.is_hit(self.stage5.stage_name, s5_key):
+            logger.info("Stage 5 cache hit — skipping chunking/summarization")
+            s5 = asyncio.run(self.stage5.run(s1, s4, visual_descriptions=s3.visual_descriptions))
+        else:
+            s5 = asyncio.run(self.stage5.run(s1, s4, visual_descriptions=s3.visual_descriptions))
+            cache.write(self.stage5.stage_name, s5_key)
 
-        chunks = build_chunks(
-            document_id=loaded.document_id,
-            source_file=loaded.original_copy_path.name,
-            ordered_blocks=ordered_blocks,
-            regions=regions,
-            target_chars=self.settings.preprocess_chunk_size,
-            overlap_chars=self.settings.preprocess_chunk_overlap,
-        )
-        visual_summaries = build_visual_summaries(
-            regions=regions,
-            ordered_blocks=ordered_blocks,
-            chunks=chunks,
-            cropped_assets=cropped_assets,
-        )
+        # Stage 6 (sync)
+        s6_key = self.stage6.cache_key(s1, s5)
+        if cache.is_hit(self.stage6.stage_name, s6_key):
+            logger.info("Stage 6 cache hit — skipping export")
+            self.stage6.run(s1, s2, s3, s4, s5)
+        else:
+            self.stage6.run(s1, s2, s3, s4, s5)
+            cache.write(self.stage6.stage_name, s6_key)
 
-        if self.settings.use_vlm_summaries:
-            from document_Process.vlm import enrich_summaries_with_vlm
-
-            visual_summaries = enrich_summaries_with_vlm(visual_summaries, settings=self.settings)
-
-        document, metadata = build_document_artifacts(
-            loaded=loaded,
-            ocr_pages=ocr_pages,
-            ordered_text=ordered_text,
-            regions=regions,
-            cropped_assets=cropped_assets,
-            chunks=chunks,
-            reading_order_model=reading_order.get("resolver", "unknown"),
-            layout_detection_model=layout_model,
-            issues=issues,
-        )
-
-        document_json_path = export_artifacts(
-            working_dir=loaded.working_dir,
-            loaded=loaded,
-            raw_ocr=ocr_pages,
-            reading_order=reading_order,
-            ordered_text=ordered_text,
-            regions=regions,
-            region_associations=associations,
-            cropped_assets=cropped_assets,
-            visual_summaries=visual_summaries,
-            chunks=chunks,
-            document=document,
-            metadata=metadata,
-        )
+        warnings = [i.message for i in (s1.issues + s4.issues + s5.issues) if i.level == "warning"]
         logger.info(
-            "Finished preprocessing document %s with %s page(s) and %s chunk(s)",
-            loaded.document_id,
-            len(loaded.pages),
-            len(chunks),
+            "Finished preprocessing %s: %s page(s), %s chunk(s)",
+            s1.document_id,
+            s1.page_count,
+            len(s5.chunks),
         )
         return PreprocessingResult(
-            document_id=loaded.document_id,
-            working_dir=loaded.working_dir,
-            document_json_path=document_json_path,
-            page_count=len(loaded.pages),
-            chunk_count=len(chunks),
-            warnings=[issue.message for issue in issues if issue.level == "warning"],
+            document_id=s1.document_id,
+            working_dir=s1.working_dir,
+            document_json_path=s1.working_dir / "document.json",
+            structured_json_path=s1.working_dir / "structured.json",
+            page_count=s1.page_count,
+            chunk_count=len(s5.chunks),
+            warnings=warnings,
         )
 
 
@@ -151,23 +141,38 @@ def preprocess_document(
     source_path = Path(source_name_or_path)
     if not source_path.is_absolute() and source_path.parent == Path("."):
         source_path = resolved_settings.raw_documents_dir / source_path
-    loader = DocumentLoaderService(resolved_settings)
+
+    # Compute document_id without loading Paddle (cheap SHA-256 hash)
+    loader = LoadDetectStage(resolved_settings)
     resolved_id = document_id or loader._build_document_id(source_path)
     working_dir = resolved_settings.processed_documents_dir / resolved_id
     manifest_path = working_dir / "manifest.json"
     chunks_path = working_dir / "chunks.json"
     document_path = working_dir / "document.json"
+
     if not force and manifest_path.exists() and chunks_path.exists() and document_path.exists():
-        logger.info("Reusing frozen preprocessing for %s", source_path)
+        logger.info("Reusing frozen preprocessing artifacts for %s", source_path)
         chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8")))
-        metadata_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         return PreprocessingResult(
             document_id=resolved_id,
             working_dir=working_dir,
             document_json_path=document_path,
-            page_count=int(metadata_payload.get("page_count") or 0),
+            structured_json_path=working_dir / "structured.json",
+            page_count=int(manifest_payload.get("page_count") or 0),
             chunk_count=chunk_count,
             warnings=[],
         )
-    pipeline = DocumentPreprocessingPipeline(resolved_settings, loader=loader)
+
+    pipeline = DocumentPreprocessingPipeline(resolved_settings)
     return pipeline.run(source_path, document_id=resolved_id)
+
+
+class _NoCache:
+    """Drop-in replacement for StageCache when stage_cache_enabled=False."""
+
+    def is_hit(self, stage_name: str, key: str) -> bool:
+        return False
+
+    def write(self, stage_name: str, key: str) -> None:
+        pass
