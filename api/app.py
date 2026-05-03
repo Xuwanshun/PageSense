@@ -35,7 +35,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from api.routers import auth, documents, health, query
+from api.routers import auth, conversations, documents, health, query
 from config import Settings, ensure_data_dirs
 from logging_config import configure_logging
 
@@ -111,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(query.router)
+    app.include_router(conversations.router)
 
     @app.get("/login", include_in_schema=False)
     async def login_page():

@@ -1,0 +1,8 @@
+{
+  "app": "python app.py",
+  "context": {
+    "desired_count": 0,
+    "account": "604561274097",
+    "region": "ca-central-1"
+  }
+}
