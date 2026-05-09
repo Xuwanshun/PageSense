@@ -42,6 +42,7 @@ import io
 import json
 import logging
 import os
+from collections import OrderedDict
 from functools import partial
 from pathlib import Path
 from typing import Dict, Generator, Iterator, List, Optional
@@ -75,11 +76,11 @@ _HF_TOKEN = os.environ.get("HF_TOKEN")
 
 def _flatten(normalizer, raw_iter: Iterator[dict]) -> Generator[dict, None, None]:
     """Apply normalizer to each sample; flatten 1-to-N results; skip errors."""
-    for sample in raw_iter:
+    for i, sample in enumerate(raw_iter):
         try:
             yield from normalizer(sample)
         except Exception as exc:
-            log.warning("Normalizer error (skipping): %s", exc)
+            log.warning("Normalizer error at sample %d (%s): %s", i, type(exc).__name__, exc)
 
 
 def _hf_stream(repo: str, split: str, normalizer, config_name: Optional[str] = None) -> hf.IterableDataset:
@@ -222,30 +223,32 @@ class S3ImageResolver:
         SBU captions     (10 GB) → s3://bucket/prefix/sharegpt4v-images/sbu/
     """
 
+    _CACHE_MAX = 1024
+
     def __init__(self, s3_cfg: S3Config):
         import boto3
         self._client     = boto3.client("s3", region_name=s3_cfg.region)
         self._bucket     = s3_cfg.bucket
         self._img_prefix = f"{s3_cfg.prefix}/{s3_cfg.sharegpt4v_images_prefix}"
-        self._cache: dict = {}
+        self._cache: OrderedDict = OrderedDict()
         self._miss_count  = 0
 
     def __call__(self, image_path: str) -> Optional[Image.Image]:
         if image_path in self._cache:
+            self._cache.move_to_end(image_path)
             return self._cache[image_path]
         try:
             obj = self._client.get_object(Bucket=self._bucket, Key=f"{self._img_prefix}/{image_path}")
             img = Image.open(io.BytesIO(obj["Body"].read())).convert("RGB")
-            if len(self._cache) > 1024:
-                self._cache.clear()
             self._cache[image_path] = img
+            if len(self._cache) > self._CACHE_MAX:
+                self._cache.popitem(last=False)
             return img
         except Exception:
             self._miss_count += 1
             if self._miss_count % 1000 == 1:
                 log.warning("ShareGPT4V: %d image misses. Upload images to s3://%s/%s/",
                             self._miss_count, self._bucket, self._img_prefix)
-            self._cache[image_path] = None
             return None
 
 

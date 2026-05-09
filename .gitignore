@@ -1,0 +1,33 @@
+# Terraform secrets — never commit
+aws_ec2/terraform.tfvars
+aws_ec2/.terraform/
+aws_ec2/.terraform.lock.hcl
+aws_ec2/terraform.tfstate
+aws_ec2/terraform.tfstate.backup
+
+# SSH keys
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Training outputs
+output/
+checkpoints/
+
+# Local dataset cache (large files)
+data/image/
+data/text/
+dataset/
+
+# HuggingFace cache
+.cache/
+
+# macOS
+.DS_Store

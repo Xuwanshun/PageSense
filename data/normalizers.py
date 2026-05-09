@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import logging
+import random
 from collections import Counter
 from typing import Callable, List, Optional
 
@@ -93,13 +94,17 @@ def normalize_chartsumm(sample: dict) -> List[dict]:
 # Splits: train 573 k papers → ~6.4 M images
 # 1 paper → N samples (one per figure)
 
+_MAX_FIGURES_PER_ARXIV_PAPER = 20
+
+
 def normalize_arxivcap(sample: dict) -> List[dict]:
     arxiv_id = sample.get("arxiv_id", "")
     title    = sample.get("title", "")
     results  = []
     for group in (sample.get("caption_images") or []):
         main = (group.get("caption") or "").strip()
-        for pair in (group.get("cil_pairs") or []):
+        # Cap figures per paper to avoid over-representing figure-heavy papers.
+        for pair in (group.get("cil_pairs") or [])[:_MAX_FIGURES_PER_ARXIV_PAPER]:
             image = _pil(pair.get("image"))
             if image is None:
                 continue
@@ -151,8 +156,9 @@ def normalize_scicap(sample: dict) -> List[dict]:
 def _normalize_docvqa_common(sample: dict, source: str) -> List[dict]:
     image    = _pil(sample.get("image"))
     question = (sample.get("question") or "").strip()
-    answers  = sample.get("answers") or []
-    answer   = answers[0].strip() if answers else ""
+    answers  = [a.strip() for a in (sample.get("answers") or []) if a and a.strip()]
+    # Sample uniformly across all valid answers to preserve label diversity.
+    answer   = random.choice(answers) if answers else ""
     if not image or not question or not answer:
         return []
     return [_out(image, PROMPTS["docvqa"].format(question=question), answer, source, {
@@ -211,7 +217,7 @@ def normalize_sharegpt4v(sample: dict, image_loader=None) -> List[dict]:
         return []
 
     question = (human.get("value") or "").replace("<image>", "").strip()
-    prompt   = PROMPTS["sharegpt4v"].format(question=question) if question else PROMPTS["chartcap"]
+    prompt   = PROMPTS["sharegpt4v"].format(question=question) if question else "Describe this image in detail."
 
     image_field = sample.get("image")
     image: Optional[Image.Image] = None
@@ -346,7 +352,8 @@ def normalize_govreport(sample: dict) -> List[dict]:
     # Hard-truncate the report to avoid exceeding model_max_length
     truncated = len(report) > _MAX_REPORT_CHARS
     if truncated:
-        report = report[:_MAX_REPORT_CHARS].rsplit(" ", 1)[0] + " [...]"
+        clipped = report[:_MAX_REPORT_CHARS]
+        report  = (clipped.rsplit(" ", 1)[0] if " " in clipped else clipped) + " [...]"
 
     prompt = PROMPTS["govreport"].format(report=report)
 

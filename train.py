@@ -21,17 +21,22 @@ Run example:
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 8 \
     --learning_rate 1e-5 \
+    --max_grad_norm 1.0 \
     --bf16 True \
     --gradient_checkpointing True \
     --lr_scheduler_type cosine \
     --warmup_ratio 0.03 \
     --save_steps 100 \
+    --save_total_limit 3 \
     --logging_steps 10 \
     --eval_strategy no
 """
 
+import contextlib
+import io
 import json
-import warnings
+import logging
+import os
 from typing import List, Optional
 
 import torch
@@ -48,11 +53,12 @@ from transformers import (
 
 from parameter import ScriptArguments
 
-warnings.filterwarnings("ignore")
+log = logging.getLogger(__name__)
 
 IGNORE_INDEX = -100
-IMAGE_TOKEN_INDEX = 151655  # <|image_pad|>
-VIDEO_TOKEN_INDEX = 151656  # <|video_pad|>
+# Resolved at runtime from the tokenizer in setup_model_and_processor().
+IMAGE_TOKEN_INDEX: int = -1
+VIDEO_TOKEN_INDEX: int = -1
 
 
 # ── Dataset ────────────────────────────────────────────────────────────────────
@@ -65,11 +71,11 @@ class VLMDataset(Dataset):
             else:
                 self.data = json.load(f)
 
+        if script_args.max_train_samples and len(self.data) > script_args.max_train_samples:
+            self.data = self.data[: script_args.max_train_samples]
+
         self.processor = processor
         self.model_max_length = script_args.model_max_length
-
-        processor.image_processor.max_pixels = script_args.max_pixels
-        processor.image_processor.min_pixels = script_args.min_pixels
 
     def __len__(self) -> int:
         return len(self.data)
@@ -109,17 +115,17 @@ class VLMDataset(Dataset):
         )
         full_inputs.pop("token_type_ids", None)
 
-        # Encode prompt-only to determine where the assistant response starts
+        # Determine prompt length without re-processing images: render prompt-only
+        # to text, then tokenize text alone (cheap — no vision encoder pass).
         prompt_messages = [m for m in messages if m["role"] != "assistant"]
-        prompt_inputs = self.processor.apply_chat_template(
+        prompt_text = self.processor.apply_chat_template(
             prompt_messages,
-            tokenize=True,
+            tokenize=False,
             add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
         )
-        prompt_inputs.pop("token_type_ids", None)
-        prompt_len = prompt_inputs["input_ids"].shape[1]
+        prompt_len = len(
+            self.processor.tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+        )
 
         # Build labels: mask prompt tokens and image/video pad tokens from loss
         labels = full_inputs["input_ids"].clone()
@@ -143,7 +149,7 @@ class VLMDataset(Dataset):
 # ── Data collator ──────────────────────────────────────────────────────────────
 
 class VLMDataCollator:
-    """Left-pads sequences to the batch maximum; stacks pixel tensors."""
+    """Right-pads sequences to the batch maximum; stacks pixel tensors."""
 
     def __init__(self, processor):
         self.pad_id = (
@@ -188,6 +194,8 @@ class VLMDataCollator:
 # ── Model setup ────────────────────────────────────────────────────────────────
 
 def setup_model_and_processor(script_args: ScriptArguments, training_args: TrainingArguments):
+    global IMAGE_TOKEN_INDEX, VIDEO_TOKEN_INDEX
+
     bnb_config = None
     if script_args.load_in_4bit:
         bnb_config = BitsAndBytesConfig(
@@ -225,7 +233,7 @@ def setup_model_and_processor(script_args: ScriptArguments, training_args: Train
     # Optionally unfreeze vision-LLM projector (only safe without 4-bit)
     if script_args.tune_mm_mlp:
         if script_args.load_in_4bit:
-            warnings.warn(
+            log.warning(
                 "tune_mm_mlp=True with load_in_4bit=True may cause instability. "
                 "Set load_in_4bit=False for projector fine-tuning."
             )
@@ -243,12 +251,26 @@ def setup_model_and_processor(script_args: ScriptArguments, training_args: Train
         task_type=TaskType.CAUSAL_LM,
     )
     model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        model.print_trainable_parameters()
+    log.info(buf.getvalue().strip())
 
     processor = AutoProcessor.from_pretrained(
         script_args.model_name_or_path,
         model_max_length=script_args.model_max_length,
     )
+
+    # Set pixel budget once here so all dataset instances share consistent limits.
+    processor.image_processor.max_pixels = script_args.max_pixels
+    processor.image_processor.min_pixels = script_args.min_pixels
+
+    # Derive special token indices from the actual tokenizer vocabulary so this
+    # stays correct if the checkpoint is ever swapped for a different model family.
+    IMAGE_TOKEN_INDEX = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+    VIDEO_TOKEN_INDEX = processor.tokenizer.convert_tokens_to_ids("<|video_pad|>")
+    log.info("IMAGE_TOKEN_INDEX=%d  VIDEO_TOKEN_INDEX=%d", IMAGE_TOKEN_INDEX, VIDEO_TOKEN_INDEX)
 
     return model, processor
 
@@ -256,8 +278,19 @@ def setup_model_and_processor(script_args: ScriptArguments, training_args: Train
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     parser = HfArgumentParser((ScriptArguments, TrainingArguments))
     script_args, training_args = parser.parse_args_into_dataclasses()
+
+    # Validate data paths before spending time loading the model.
+    if not os.path.isfile(script_args.data_path):
+        raise FileNotFoundError(f"Training data not found: {script_args.data_path!r}")
+    if script_args.eval_data_path and not os.path.isfile(script_args.eval_data_path):
+        raise FileNotFoundError(f"Eval data not found: {script_args.eval_data_path!r}")
 
     model, processor = setup_model_and_processor(script_args, training_args)
 
@@ -275,7 +308,7 @@ def main():
         eval_dataset=eval_dataset,
         data_collator=VLMDataCollator(processor),
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_model(training_args.output_dir)
     processor.save_pretrained(training_args.output_dir)
 

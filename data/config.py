@@ -1,5 +1,6 @@
 """Pipeline configuration: S3, dataset IDs, sampling ratios, prompt templates."""
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Dict
 
 
@@ -9,7 +10,7 @@ from typing import Dict
 
 @dataclass
 class S3Config:
-    bucket: str = "your-sft-data-bucket"      # override via env SFT_S3_BUCKET
+    bucket: str = "your-sft-data-bucket"
     region: str = "us-east-1"
     prefix: str = "qwen3-vl-sft"              # root key prefix in the bucket
 
@@ -20,6 +21,11 @@ class S3Config:
 
     # Sub-prefix for ShareGPT4V source images (COCO etc. must be uploaded separately)
     sharegpt4v_images_prefix: str = "sharegpt4v-images"
+
+    def __post_init__(self) -> None:
+        # Allow env-var overrides so callers don't need to hardcode credentials.
+        self.bucket = os.environ.get("SFT_S3_BUCKET", self.bucket)
+        self.region = os.environ.get("AWS_DEFAULT_REGION", self.region)
 
 
 # ---------------------------------------------------------------------------

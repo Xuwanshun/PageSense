@@ -53,12 +53,11 @@ resource "aws_iam_role" "ec2_training" {
 }
 
 data "aws_iam_policy_document" "ec2_policy" {
-  # S3: read dataset, write checkpoints
+  # S3: read dataset, write checkpoints (no delete — prevents accidental wipe of cached data)
   statement {
     actions = [
       "s3:GetObject",
       "s3:PutObject",
-      "s3:DeleteObject",
       "s3:ListBucket",
     ]
     resources = [

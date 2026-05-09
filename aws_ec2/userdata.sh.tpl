@@ -42,6 +42,9 @@ sudo -u ubuntu /home/ubuntu/training/venv/bin/pip install flash-attn --no-build-
   echo "flash-attn build failed — using sdpa attention (set attn_implementation=sdpa in args)"
 
 # ── HuggingFace authentication ────────────────────────────────────────────────
+# Prefer fetching the token from Secrets Manager (avoids embedding it in userdata).
+# Store with: aws secretsmanager create-secret --name hf-token --secret-string "<token>"
+# Then set hf_token="" in terraform.tfvars and pass the ARN as hf_token_secret_arn.
 %{ if hf_token != "" }
 sudo -u ubuntu /home/ubuntu/training/venv/bin/python3 -c \
   "from huggingface_hub import login; login('${hf_token}')"
@@ -65,32 +68,36 @@ STOP_SCRIPT
 chmod +x /home/ubuntu/training/stop_self.sh
 
 # ── Launch script template ────────────────────────────────────────────────────
-cat > /home/ubuntu/training/run_training.sh << 'RUN_SCRIPT'
+cat > /home/ubuntu/training/run_training.sh << RUN_SCRIPT
 #!/bin/bash
+set -euo pipefail
 cd /home/ubuntu/training
 source venv/bin/activate
 
-# Sync latest checkpoint back to S3 after training
-BUCKET=$(aws s3 ls | awk '{print $3}' | head -1)
+# Bucket injected at instance launch by Terraform — no discovery needed.
+BUCKET="${s3_bucket}"
+REGION="${aws_region}"
 
 python train.py \
+  --data_path dataset/train.json \
   --output_dir output/qwen3-vl-sft \
   --num_train_epochs 3 \
   --per_device_train_batch_size 1 \
   --gradient_accumulation_steps 8 \
   --learning_rate 1e-5 \
+  --max_grad_norm 1.0 \
   --bf16 True \
   --gradient_checkpointing True \
   --lr_scheduler_type cosine \
   --warmup_ratio 0.03 \
   --save_steps 100 \
-  --save_total_limit 2 \
+  --save_total_limit 3 \
   --logging_steps 10 \
   --eval_strategy no \
   --dataloader_num_workers 2
 
 # Upload final checkpoint to S3
-aws s3 sync output/qwen3-vl-sft s3://${s3_bucket}/checkpoints/ --region ${aws_region}
+aws s3 sync output/qwen3-vl-sft "s3://\$BUCKET/checkpoints/" --region "\$REGION"
 
 # Stop the instance to save cost
 /home/ubuntu/training/stop_self.sh

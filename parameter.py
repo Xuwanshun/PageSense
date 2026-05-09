@@ -30,9 +30,9 @@ class ScriptArguments:
         default=None,
         metadata={"help": "Path to evaluation JSONL/JSON file; omit to skip eval"},
     )
-    num_proc: int = field(
-        default=4,
-        metadata={"help": "Number of worker processes for data preprocessing"},
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={"help": "Truncate training set to this many samples (useful for quick dev runs)"},
     )
     model_max_length: int = field(
         default=4096,

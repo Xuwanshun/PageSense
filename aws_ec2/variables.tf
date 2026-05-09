@@ -52,9 +52,13 @@ variable "volume_size_gb" {
 }
 
 variable "allowed_ssh_cidr" {
-  description = "CIDR block allowed to SSH. Restrict to your IP (e.g. 1.2.3.4/32) for security."
+  description = "CIDR block allowed to SSH. Must be your IP in /32 notation (e.g. 1.2.3.4/32). Run: curl -s ifconfig.me && echo '/32'"
   type        = string
-  default     = "0.0.0.0/0"
+
+  validation {
+    condition     = can(cidrhost(var.allowed_ssh_cidr, 0)) && !contains(["0.0.0.0/0", "::/0"], var.allowed_ssh_cidr)
+    error_message = "allowed_ssh_cidr must be a specific CIDR (e.g. 1.2.3.4/32), not 0.0.0.0/0."
+  }
 }
 
 variable "idle_cpu_threshold" {
