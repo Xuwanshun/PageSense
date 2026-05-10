@@ -141,57 +141,55 @@ POST /query  { question, doc_filter[], conversation_id }
         └── 8. Return { answer, sources[], conversation_id }
 ```
 
-### Full Mermaid Diagram
-
 ```mermaid
 flowchart TD
     subgraph Input
-        PDF[PDF File]
-        CLI["CLI\npython main.py"]
-        HTTP["Browser\n/documents/upload"]
+        PDF["PDF File"]
+        CLI["CLI: python main.py"]
+        HTTP["Browser: documents upload"]
     end
 
-    subgraph document_process["document_process/ — Stage 1: PDF → Artifacts"]
-        DL[DocumentLoaderService\nload + copy PDF]
-        OCR[OCRService\nPaddleOCR — cached singleton]
-        RO[ReadingOrderService\nresolve block order]
-        LD[LayoutDetectionService\nPP-DocLayout_plus-L — cached singleton]
-        AS[AssociationService\nlink text to regions]
-        CR[CroppingService\ncrop tables and figures]
-        VLM["VLM Enrichment\ngpt-4o\n(USE_VLM_SUMMARIES=true)"]
-        ARTS["Frozen Artifacts\ndocument.json · chunks.json · crops/"]
+    subgraph DocumentProcess["document_process - Stage 1 PDF to Artifacts"]
+        DL["DocumentLoaderService: load and copy PDF"]
+        OCR["OCRService: PaddleOCR cached singleton"]
+        RO["ReadingOrderService: resolve block order"]
+        LD["LayoutDetectionService: PP DocLayout cached singleton"]
+        AS["AssociationService: link text to regions"]
+        CR["CroppingService: crop tables and figures"]
+        VLM["VLM Enrichment: gpt-4o"]
+        ARTS["Frozen Artifacts: document json, chunks json, crops"]
     end
 
-    subgraph rag["rag/ — Stage 2: Artifacts → Index → Answer"]
-        CH[chunk.py\nProcessedChunk → ChunkRecord]
-        EM[embed.py\nOpenAI text-embedding-3-small]
+    subgraph RAG["rag - Stage 2 Artifacts to Index to Answer"]
+        CH["chunk.py: ProcessedChunk to ChunkRecord"]
+        EM["embed.py: OpenAI text embedding 3 small"]
         VS{"VectorStore"}
-        JVS[JsonVectorStore\nstore.json]
-        CVS[ChromaVectorStore]
-        QA[qa.py\ngpt-4.1-mini\nQAResponse + sources]
+        JVS["JsonVectorStore: store json"]
+        CVS["ChromaVectorStore"]
+        QA["qa.py: gpt-4.1-mini QAResponse and sources"]
     end
 
-    subgraph api["api/ — FastAPI HTTP Layer"]
-        APP[create_app factory]
-        AUTH[/auth/* — JWT + OAuth]
-        DR["/documents — upload · list · delete"]
-        QR["/query — RAG pipeline"]
-        CV["/conversations — history"]
-        UI[Static Frontend]
+    subgraph API["api - FastAPI HTTP Layer"]
+        APP["create_app factory"]
+        AUTH["auth endpoints: JWT and OAuth"]
+        DR["documents endpoints: upload, list, delete"]
+        QR["query endpoint: RAG pipeline"]
+        CV["conversations endpoint: history"]
+        UI["Static Frontend"]
     end
 
-    subgraph db["RDS PostgreSQL"]
-        USERS[(users)]
-        TOKENS[(refresh_tokens)]
-        CONVOS[(conversations)]
-        MSGS[(messages)]
+    subgraph DB["RDS PostgreSQL"]
+        USERS[("users")]
+        TOKENS[("refresh_tokens")]
+        CONVOS[("conversations")]
+        MSGS[("messages")]
     end
 
-    subgraph infra["AWS Infrastructure"]
-        S3[(S3\nartifacts + vectorstore)]
-        ECS[ECS Fargate\n2 vCPU / 8 GB]
-        ALB[ALB\nidle_timeout=600s]
-        SM[Secrets Manager]
+    subgraph Infra["AWS Infrastructure"]
+        S3[("S3: artifacts and vectorstore")]
+        ECS["ECS Fargate: 2 vCPU and 8 GB"]
+        ALB["ALB: idle timeout 600s"]
+        SM["Secrets Manager"]
     end
 
     PDF --> CLI
@@ -199,21 +197,37 @@ flowchart TD
     CLI --> DL
     DR --> DL
 
-    DL --> OCR --> RO --> LD --> AS --> CR
-    CR --> VLM --> ARTS
+    DL --> OCR
+    OCR --> RO
+    RO --> LD
+    LD --> AS
+    AS --> CR
+
+    CR --> VLM
+    VLM --> ARTS
     CR --> ARTS
 
-    ARTS --> CH --> EM --> VS
+    ARTS --> CH
+    CH --> EM
+    EM --> VS
     VS -->|default| JVS
-    VS -->|opt-in| CVS
+    VS -->|optional| CVS
     JVS --> QA
     CVS --> QA
 
-    APP --> AUTH & DR & QR & CV & UI
+    APP --> AUTH
+    APP --> DR
+    APP --> QR
+    APP --> CV
+    APP --> UI
+
     QR --> QA
-    AUTH --> USERS & TOKENS
-    QR --> CONVOS & MSGS
-    CV --> CONVOS & MSGS
+    AUTH --> USERS
+    AUTH --> TOKENS
+    QR --> CONVOS
+    QR --> MSGS
+    CV --> CONVOS
+    CV --> MSGS
 
     ARTS <-->|sync| S3
     JVS <-->|sync| S3
