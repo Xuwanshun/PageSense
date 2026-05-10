@@ -64,3 +64,4 @@ infra/.terraform/
 
 # ── Paddle model weights ──────────────────────────────────────────────────────
 paddle_models/
+cdk/cdk.out/

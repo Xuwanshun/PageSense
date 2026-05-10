@@ -1,5 +1,6 @@
 import { initSidebar } from './sidebar.js';
 import { initQuery } from './query.js';
+import { initConversations } from './conversations.js';
 
 // Access token lives here only — never in localStorage or sessionStorage
 let _token = null;
@@ -47,8 +48,44 @@ async function init() {
 
   const selectedIds = new Set();
 
-  const query = initQuery({ getSelectedIds: () => new Set(selectedIds), authedFetch });
+  // ── Query module ───────────────────────────────────────────
+  const query = initQuery({
+    getSelectedIds: () => new Set(selectedIds),
+    authedFetch,
+    // Called when the first question of a new conversation is answered.
+    // Refreshes the history list and highlights the new entry.
+    onConversationCreated: (id) => {
+      conversations.refresh().then(() => conversations.markActive(id));
+    },
+  });
 
+  // ── Conversation history module ────────────────────────────
+  // When user clicks a past conversation in the sidebar:
+  //   1. Load its messages and render them in the chat panel
+  //   2. Set the conversation ID so new questions append to it
+  const conversations = initConversations({
+    authedFetch,
+    onSelect: (id, msgs) => {
+      query.loadConversation(msgs);
+      query.setConversationId(id);
+    },
+  });
+
+  // Load conversation list on startup — shows the user their history
+  // immediately after login without any extra clicks.
+  conversations.refresh();
+
+  // ── New Chat button ────────────────────────────────────────
+  const newChatBtn = document.getElementById('new-chat-btn');
+  if (newChatBtn) {
+    newChatBtn.addEventListener('click', () => {
+      query.startNewChat();
+      // Deselect any active conversation in the sidebar
+      conversations.markActive(null);
+    });
+  }
+
+  // ── Document sidebar ───────────────────────────────────────
   const sidebar = initSidebar({
     onSelectionChange: (ids, names) => {
       selectedIds.clear();
@@ -63,6 +100,7 @@ async function init() {
     .then(({ documents }) => sidebar.loadExisting(documents || []))
     .catch(() => {});
 
+  // ── Logout ─────────────────────────────────────────────────
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {

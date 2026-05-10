@@ -28,6 +28,10 @@ from rag.retrieve import index_all_processed_documents
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
 
+# Only one OCR pipeline runs at a time — Paddle models are large and running
+# two concurrent jobs would risk OOM on the 8 GB Fargate container.
+_pipeline_semaphore = threading.Semaphore(1)
+
 
 def _run_pipeline(
     dest: Path,
@@ -36,30 +40,31 @@ def _run_pipeline(
     document_id: str,
 ) -> None:
     """Run preprocess → index in a background thread and update jobs dict."""
-    try:
-        jobs[document_id]["status"] = "preprocessing"
-        result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
-        jobs[document_id]["status"] = "indexing"
-        index_all_processed_documents(settings=settings)
-        jobs[document_id].update(
-            status="ready",
-            chunk_count=result.chunk_count,
-            page_count=result.page_count,
-            error=None,
-        )
-        logger.info("Pipeline complete for document_id=%s", document_id)
+    with _pipeline_semaphore:
+        try:
+            jobs[document_id]["status"] = "preprocessing"
+            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
+            jobs[document_id]["status"] = "indexing"
+            index_all_processed_documents(settings=settings)
+            jobs[document_id].update(
+                status="ready",
+                chunk_count=result.chunk_count,
+                page_count=result.page_count,
+                error=None,
+            )
+            logger.info("Pipeline complete for document_id=%s", document_id)
 
-        if settings.s3_bucket_name:
-            from storage.s3 import sync_embedded_to_s3, sync_processed_to_s3
+            if settings.s3_bucket_name:
+                from storage.s3 import sync_embedded_to_s3, sync_processed_to_s3
 
-            try:
-                sync_processed_to_s3(settings)
-                sync_embedded_to_s3(settings)
-            except Exception as exc:
-                logger.warning("S3 sync after upload pipeline failed: %s", exc)
-    except Exception as exc:
-        logger.exception("Pipeline failed for document_id=%s", document_id)
-        jobs[document_id].update(status="error", error=str(exc))
+                try:
+                    sync_processed_to_s3(settings)
+                    sync_embedded_to_s3(settings)
+                except Exception as exc:
+                    logger.warning("S3 sync after upload pipeline failed: %s", exc)
+        except Exception as exc:
+            logger.exception("Pipeline failed for document_id=%s", document_id)
+            jobs[document_id].update(status="error", error=str(exc))
 
 
 @router.post("/preprocess")

@@ -23,6 +23,26 @@
 #   To manually rollback, re-deploy a previous image tag:
 #     aws ecs update-service --cluster CLUSTER --service SERVICE \
 #       --task-definition FAMILY:PREVIOUS_VERSION
+#
+# REQUIRED GITHUB SECRETS (Settings → Secrets and variables → Actions → New secret):
+# ┌──────────────────────────┬─────────────────────────────────────────────────┐
+# │ Secret name              │ Where to get the value                          │
+# ├──────────────────────────┼─────────────────────────────────────────────────┤
+# │ AWS_ACCESS_KEY_ID        │ IAM user with deploy permissions (see below)    │
+# │ AWS_SECRET_ACCESS_KEY    │ IAM user                                        │
+# │ AWS_REGION               │ e.g. ca-central-1                               │
+# │ ECR_REPOSITORY_URI       │ cdk deploy output: RagAgentApp.EcrRepositoryUri │
+# │ ECS_CLUSTER_NAME         │ cdk deploy output: RagAgentApp.EcsClusterName   │
+# │ ECS_SERVICE_NAME         │ cdk deploy output: RagAgentApp.EcsServiceName   │
+# └──────────────────────────┴─────────────────────────────────────────────────┘
+#
+# HOW TO CREATE THE IAM USER FOR GITHUB ACTIONS:
+#   1. AWS Console → IAM → Users → Create user (name: github-actions-deploy)
+#   2. Attach these managed policies:
+#        AmazonEC2ContainerRegistryPowerUser   (ECR push)
+#        AmazonECS_FullAccess                  (ECS deploy)
+#        ElasticLoadBalancingReadOnly          (smoke test ALB lookup)
+#   3. Create access key → paste into GitHub secrets
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Deploy
@@ -39,8 +59,6 @@ concurrency:
 
 jobs:
   # ── Re-run CI checks before deploying ─────────────────────────────────────
-  # Even though CI ran on this commit already, we run it again here to be safe.
-  # (GitHub doesn't guarantee CI ran successfully before the deploy trigger.)
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -68,28 +86,13 @@ jobs:
   deploy:
     name: Build, push, and deploy to ECS
     runs-on: ubuntu-latest  # x86_64 runner — image targets x86 ECS
-    needs: [lint, test]  # only deploy if lint + test passed
-
-    # Required GitHub repository secrets (Settings → Secrets → Actions):
-    # ┌─────────────────────────────┬─────────────────────────────────────────┐
-    # │ Secret name                 │ Where to get the value                  │
-    # ├─────────────────────────────┼─────────────────────────────────────────┤
-    # │ AWS_ACCESS_KEY_ID           │ IAM user (deploy-only permissions)      │
-    # │ AWS_SECRET_ACCESS_KEY       │ IAM user                                │
-    # │ AWS_REGION                  │ e.g. us-east-1                          │
-    # │ ECR_REPOSITORY_URI          │ terraform output ecr_repository_uri     │
-    # │ ECS_CLUSTER_NAME            │ terraform output ecs_cluster_name       │
-    # │ ECS_SERVICE_NAME            │ terraform output ecs_service_name       │
-    # │ ECS_TASK_DEFINITION_FAMILY  │ terraform output ecs_task_definition_family │
-    # └─────────────────────────────┴─────────────────────────────────────────┘
+    needs: [lint, test]     # only deploy if lint + test passed
 
     steps:
       - name: Check out code
         uses: actions/checkout@v4
 
       # ── AWS Authentication ─────────────────────────────────────────────────
-      # This action reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from
-      # GitHub secrets and configures the AWS CLI for all subsequent steps.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -98,8 +101,6 @@ jobs:
           aws-region:            ${{ secrets.AWS_REGION }}
 
       # ── ECR Login ─────────────────────────────────────────────────────────
-      # Docker needs to authenticate with ECR before it can push.
-      # This action runs `aws ecr get-login-password` and calls `docker login`.
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -119,18 +120,26 @@ jobs:
             ${{ secrets.ECR_REPOSITORY_URI }}:latest
           # Layer caching in ECR: stores the heavy Paddle layers in ECR.
           # First build: ~20 min (downloads models). Subsequent builds: ~2-3 min.
-          # The `:buildcache` tag is a dedicated tag just for layer cache storage.
           cache-from: type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache
           cache-to:   type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache,mode=max
 
       # ── ECS Deploy ────────────────────────────────────────────────────────
-      # We update the ECS task definition to use the new image tag,
-      # then tell the ECS service to use the new task definition.
-      # ECS handles rolling out the new container and draining the old one.
+      # Derive the task definition family name from the ECS service — no extra
+      # secret needed. CDK names the family the same as the service by convention.
+      - name: Resolve ECS task definition family
+        id: resolve-task-def
+        run: |
+          FAMILY=$(aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER_NAME }}" \
+            --services "${{ secrets.ECS_SERVICE_NAME }}" \
+            --query "services[0].taskDefinition" \
+            --output text | sed 's|.*/\([^:]*\):.*|\1|')
+          echo "family=${FAMILY}" >> "$GITHUB_OUTPUT"
+
       - name: Download current ECS task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ secrets.ECS_TASK_DEFINITION_FAMILY }} \
+            --task-definition "${{ steps.resolve-task-def.outputs.family }}" \
             --query taskDefinition \
             > task-definition.json
 
@@ -145,20 +154,18 @@ jobs:
       - name: Deploy updated task definition to ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
-          task-definition:        ${{ steps.update-task-def.outputs.task-definition }}
-          service:                ${{ secrets.ECS_SERVICE_NAME }}
-          cluster:                ${{ secrets.ECS_CLUSTER_NAME }}
-          # Wait until ECS reports the new task as healthy before marking
-          # this step as successful. If it fails, the old task stays running.
-          wait-for-service-stability: true
+          task-definition:             ${{ steps.update-task-def.outputs.task-definition }}
+          service:                     ${{ secrets.ECS_SERVICE_NAME }}
+          cluster:                     ${{ secrets.ECS_CLUSTER_NAME }}
+          # Waits until new task is healthy before marking success.
+          # If health checks fail, ECS keeps the old task running (auto-rollback).
+          wait-for-service-stability:  true
 
       # ── Smoke Test ────────────────────────────────────────────────────────
-      # After ECS says the deployment is stable, call /health one more time
-      # from GitHub Actions to confirm external traffic reaches the container.
       - name: Smoke test deployed service
         run: |
           ALB_URL=$(aws elbv2 describe-load-balancers \
-            --query "LoadBalancers[?contains(LoadBalancerName, 'rag-agent')].DNSName" \
+            --query "LoadBalancers[?contains(LoadBalancerName, 'Rag')].DNSName" \
             --output text)
 
           echo "Testing http://${ALB_URL}/health"
@@ -166,4 +173,4 @@ jobs:
             "http://${ALB_URL}/health"
 
           echo ""
-          echo "Deployment successful!"
+          echo "Deployment successful! App is live at http://${ALB_URL}"
