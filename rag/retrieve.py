@@ -1,268 +1,257 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from config import Settings
-from document_Process.clients import build_openai_client
-from document_Process.models import ProcessedChunk, ProcessedDocument
-from rag.chunk import ChunkRecord, RetrievedChunk, chunk_records_from_processed_chunks
+from document_Process.models import ProcessedChunk
+from rag.chunk import (
+    ChunkRecord,
+    RetrievedChunk,
+    block_records_from_processed_chunks,
+    section_records_from_processed_chunks,
+)
 from rag.embed import EmbeddingBackend, build_embedding_backend
-from rag.hybrid import BM25Index, apply_region_boost, expand_to_parent_context, rrf_fuse
+
+logger = logging.getLogger(__name__)
+
+# ── Retrieval constants ────────────────────────────────────────────────────────
+
+_SECTION_THRESHOLD = 0.55
+_TOP_SECTIONS = 3
+_NEIGHBOR_WINDOW = 2
+
+_BOOST_FIGURE = 0.15
+_BOOST_TABLE = 0.10
+_BOOST_ADJACENT = 0.05
+
+_VISUAL_TERMS = frozenset(
+    [
+        "figure",
+        "chart",
+        "diagram",
+        "shows",
+        "illustrated",
+        "image",
+        "plot",
+        "visual",
+    ]
+)
+_DATA_TERMS = [
+    "how many",
+    "how much",
+    "compare",
+    "total",
+    "percent",
+    "percentage",
+    "list",
+    "table",
+    "count",
+    "number",
+    "rate",
+    "breakdown",
+]
 
 
-@dataclass(frozen=True)
-class QAResponse:
-    question: str
-    answer: str
-    sources: list[dict[str, Any]]
+# ── Retrieval post-processing ──────────────────────────────────────────────────
 
 
-class VectorStore(Protocol):
-    def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None: ...
+def _token_overlap(query: str, content: str) -> int:
+    query_tokens = set(query.lower().split())
+    content_lower = content.lower()
+    return sum(1 for t in query_tokens if t in content_lower)
 
-    def query(
-        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]: ...
 
-    def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]: ...
+def _apply_query_boosts(blocks: list[RetrievedChunk], query: str) -> list[RetrievedChunk]:
+    """Additive score boosts based on block type, query intent, and token overlap."""
+    lowered = query.lower()
+    has_visual = any(t in lowered for t in _VISUAL_TERMS)
+    has_data = any(phrase in lowered for phrase in _DATA_TERMS)
 
-    def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]: ...
+    result: list[RetrievedChunk] = []
+    for block in blocks:
+        boost = 0.0
+        block_type = block.metadata.get("block_type", "")
+        content = block.metadata.get("content") or block.text
 
-    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]: ...
+        if block_type == "figure_description" and has_visual:
+            boost += _BOOST_FIGURE
+        if block_type == "table" and has_data:
+            boost += _BOOST_TABLE
+        if block.metadata.get("has_adjacent_figure"):
+            boost += _BOOST_ADJACENT
+        boost += _token_overlap(query, content) * 0.01
+
+        result.append(
+            RetrievedChunk(
+                chunk_id=block.chunk_id,
+                text=block.text,
+                metadata=block.metadata,
+                score=block.score + boost,
+            )
+        )
+    return sorted(result, key=lambda b: b.score, reverse=True)
+
+
+def _expand_neighbors(
+    matched: list[RetrievedChunk],
+    all_blocks: list[RetrievedChunk],
+    *,
+    window: int = _NEIGHBOR_WINDOW,
+) -> list[RetrievedChunk]:
+    """Expand each matched block by ±window neighbors within the same section."""
+    section_map: dict[tuple[str, str], list[RetrievedChunk]] = {}
+    for block in all_blocks:
+        key = (
+            str(block.metadata.get("doc_id") or ""),
+            str(block.metadata.get("section_id") or ""),
+        )
+        section_map.setdefault(key, []).append(block)
+    for blocks in section_map.values():
+        blocks.sort(key=lambda b: b.metadata.get("block_index", 0))
+
+    position: dict[str, tuple[tuple[str, str], int]] = {}
+    for key, blocks in section_map.items():
+        for pos, block in enumerate(blocks):
+            position[block.chunk_id] = (key, pos)
+
+    seen: set[str] = set()
+    result: list[RetrievedChunk] = []
+    for hit in matched:
+        loc = position.get(hit.chunk_id)
+        if loc is None:
+            if hit.chunk_id not in seen:
+                seen.add(hit.chunk_id)
+                result.append(hit)
+            continue
+        key, pos = loc
+        section = section_map[key]
+        for neighbor in section[max(0, pos - window) : pos + window + 1]:
+            if neighbor.chunk_id not in seen:
+                seen.add(neighbor.chunk_id)
+                result.append(neighbor)
+    return result
+
+
+def _sort_by_reading_order(blocks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    return sorted(
+        blocks,
+        key=lambda b: (
+            str(b.metadata.get("doc_id") or ""),
+            str(b.metadata.get("section_id") or ""),
+            int(b.metadata.get("block_index", 0)),
+        ),
+    )
+
+
+# ── Vector store ──────────────────────────────────────────────────────────────
 
 
 class JsonVectorStore:
     def __init__(self, store_path: Path) -> None:
         self.store_path = store_path
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        self._cached_rows: list[dict[str, Any]] | None = None
+        self._cache_mtime: float | None = None
+
+    def clear(self) -> None:
+        if self.store_path.exists():
+            self.store_path.unlink()
+        self._cached_rows = None
+        self._cache_mtime = None
 
     def _load_rows(self) -> list[dict[str, Any]]:
         if not self.store_path.exists():
+            self._cached_rows = None
+            self._cache_mtime = None
             return []
-        payload = json.loads(self.store_path.read_text(encoding="utf-8"))
-        return payload.get("rows", [])
+        mtime = self.store_path.stat().st_mtime
+        if self._cached_rows is not None and self._cache_mtime == mtime:
+            return self._cached_rows
+        self._cached_rows = json.loads(self.store_path.read_text(encoding="utf-8")).get("rows", [])
+        self._cache_mtime = mtime
+        return self._cached_rows
 
     def _save_rows(self, rows: list[dict[str, Any]]) -> None:
-        self.store_path.write_text(json.dumps({"rows": rows}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.store_path.write_text(
+            json.dumps({"rows": rows}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self._cached_rows = None
+        self._cache_mtime = None
 
     def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
         existing = {row["chunk_id"]: row for row in self._load_rows()}
-        for chunk, embedding in zip(chunks, embeddings, strict=False):
+        for chunk, emb in zip(chunks, embeddings, strict=False):
             existing[chunk.chunk_id] = {
                 "chunk_id": chunk.chunk_id,
                 "text": chunk.text,
                 "metadata": chunk.metadata,
-                "embedding": embedding,
+                "embedding": emb,
             }
         self._save_rows(list(existing.values()))
 
     def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        scored: list[RetrievedChunk] = []
         filter_set = set(doc_filter) if doc_filter else None
+        scored: list[RetrievedChunk] = []
         for row in self._load_rows():
             if filter_set is not None:
-                doc_id = row.get("metadata", {}).get("document_id")
-                if doc_id not in filter_set:
+                if row.get("metadata", {}).get("document_id") not in filter_set:
                     continue
-            score = _cosine_similarity(embedding, row.get("embedding", []))
             scored.append(
                 RetrievedChunk(
                     chunk_id=row["chunk_id"],
                     text=row.get("text", ""),
                     metadata=row.get("metadata", {}),
-                    score=score,
+                    score=_cosine_similarity(embedding, row.get("embedding", [])),
                 )
             )
-        return sorted(scored, key=lambda item: item.score, reverse=True)[:top_k]
-
-    def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        rows = self._load_rows()
-        filter_set = set(doc_filter) if doc_filter else None
-        chunk_ids: list[str] = []
-        texts: list[str] = []
-        metadatas: list[dict[str, Any]] = []
-        for row in rows:
-            if filter_set is not None:
-                doc_id = row.get("metadata", {}).get("document_id")
-                if doc_id not in filter_set:
-                    continue
-            chunk_ids.append(row["chunk_id"])
-            texts.append(row.get("text", ""))
-            metadatas.append(row.get("metadata", {}))
-        index = BM25Index()
-        index.build(chunk_ids, texts, metadatas)
-        return index.query(query, top_k)
+        return sorted(scored, key=lambda c: c.score, reverse=True)[:top_k]
 
     def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         filter_set = set(doc_filter) if doc_filter else None
-        result: list[RetrievedChunk] = []
-        for row in self._load_rows():
-            if filter_set is not None:
-                doc_id = row.get("metadata", {}).get("document_id")
-                if doc_id not in filter_set:
-                    continue
-            result.append(
-                RetrievedChunk(
-                    chunk_id=row["chunk_id"],
-                    text=row.get("text", ""),
-                    metadata=row.get("metadata", {}),
-                    score=0.0,
-                )
-            )
-        return result
-
-    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]:
-        seen_ids: set[str] = set()
-        for row in self._load_rows():
-            doc_id = row.get("metadata", {}).get("document_id")
-            if doc_id:
-                seen_ids.add(str(doc_id))
-        result: list[dict[str, Any]] = []
-        for doc_id in seen_ids:
-            doc_path = processed_documents_dir / doc_id / "document.json"
-            if not doc_path.exists():
-                continue
-            try:
-                payload = json.loads(doc_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            embedding = payload.get("summary_embedding")
-            if embedding:
-                result.append({"document_id": doc_id, "summary_embedding": embedding})
-        return result
-
-
-class ChromaVectorStore:
-    def __init__(self, persist_dir: Path, collection_name: str = "rag_agent_pdf") -> None:
-        try:
-            import chromadb  # type: ignore
-        except Exception as exc:
-            raise RuntimeError("chromadb is not installed.") from exc
-
-        client = chromadb.PersistentClient(path=str(persist_dir))
-        self.collection = client.get_or_create_collection(name=collection_name)
-
-    def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
-        if not chunks:
-            return
-        self.collection.upsert(
-            ids=[chunk.chunk_id for chunk in chunks],
-            documents=[chunk.text for chunk in chunks],
-            metadatas=[chunk.metadata for chunk in chunks],
-            embeddings=embeddings,
-        )
-
-    def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        query_kwargs: dict[str, Any] = {
-            "query_embeddings": [embedding],
-            "n_results": top_k,
-            "include": ["documents", "metadatas", "distances"],
-        }
-        if doc_filter:
-            query_kwargs["where"] = {"document_id": {"$in": doc_filter}}
-        response = self.collection.query(**query_kwargs)
-        ids = (response.get("ids") or [[]])[0]
-        documents = (response.get("documents") or [[]])[0]
-        metadatas = (response.get("metadatas") or [[]])[0]
-        distances = (response.get("distances") or [[]])[0]
         return [
             RetrievedChunk(
-                chunk_id=chunk_id,
-                text=text or "",
-                metadata=metadata or {},
-                score=1.0 - float(distance),
+                chunk_id=row["chunk_id"],
+                text=row.get("text", ""),
+                metadata=row.get("metadata", {}),
+                score=0.0,
             )
-            for chunk_id, text, metadata, distance in zip(ids, documents, metadatas, distances, strict=False)
+            for row in self._load_rows()
+            if filter_set is None or row.get("metadata", {}).get("document_id") in filter_set
         ]
 
-    def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        # ChromaDB does not expose raw text for BM25 — return empty so the
-        # caller falls back to dense-only retrieval gracefully.
-        return []
 
-    def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        return []
-
-    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]:
-        return []
+# ── DocumentRetriever ──────────────────────────────────────────────────────────
 
 
 class DocumentRetriever:
+    """Two-pool retriever: Pool A (sections) + Pool B (blocks).
+
+    Retrieval pipeline:
+    1. Section pre-filter — cosine search Pool A → top sections above threshold.
+    2. Block search       — dense search Pool B within candidate sections.
+    3. Boost + expand     — additive type boosts + ±2 neighbor expansion.
+    4. Reading order      — final results sorted for coherent context presentation.
+    """
+
     def __init__(
         self,
         settings: Settings,
         *,
         embedding_backend: EmbeddingBackend | None = None,
-        vector_store: VectorStore | None = None,
+        section_store: JsonVectorStore | None = None,
+        block_store: JsonVectorStore | None = None,
     ) -> None:
         self.settings = settings
         self.embedding_backend = embedding_backend or build_embedding_backend(settings)
-        self.vector_store = vector_store or build_vector_store(settings)
+        self.section_store = section_store or JsonVectorStore(settings.vectorstore_dir / "sections.json")
+        self.block_store = block_store or JsonVectorStore(settings.vectorstore_dir / "blocks.json")
 
-    def upsert_chunks(self, chunks: list[ChunkRecord]) -> None:
-        embeddings = self.embedding_backend.embed_texts([chunk.text for chunk in chunks])
-        self.vector_store.upsert(chunks, embeddings)
-
-    def retrieve(
-        self,
-        question: str,
-        top_k: int | None = None,
-        *,
-        doc_filter: list[str] | None = None,
-    ) -> list[RetrievedChunk]:
-        query_embedding = self.embedding_backend.embed_texts([question])[0]
-        return self.vector_store.query(
-            query_embedding,
-            top_k or self.settings.default_top_k,
-            doc_filter=doc_filter or None,
-        )
-
-    def hybrid_retrieve(
-        self,
-        question: str,
-        top_k: int | None = None,
-        *,
-        doc_filter: list[str] | None = None,
-        parent_threshold: int = 2,
-    ) -> list[RetrievedChunk]:
-        """
-        Hybrid retrieval: dense vector + BM25 sparse, fused via RRF.
-
-        Post-processing steps applied in order:
-        1. RRF fusion of dense and sparse ranked lists
-        2. Region-type boost (1.3× for table/figure when query has data intent)
-        3. Parent-context expansion (replace clusters of siblings with full section)
-        """
-        k = top_k or self.settings.default_top_k
-        fetch_k = k * 3  # over-fetch so fusion has enough candidates
-
-        query_embedding = self.embedding_backend.embed_texts([question])[0]
-        dense_results = self.vector_store.query(query_embedding, fetch_k, doc_filter=doc_filter or None)
-        sparse_results = self.vector_store.bm25_query(question, fetch_k, doc_filter=doc_filter or None)
-
-        fused = rrf_fuse(dense_results, sparse_results)
-        fused = apply_region_boost(fused, question)
-        fused = fused[:k]
-
-        all_chunks = self.vector_store.get_all_chunks(doc_filter=doc_filter or None)
-        fused = expand_to_parent_context(fused, all_chunks, sibling_threshold=parent_threshold)
-
-        return fused
-
-    def filter_by_relevance(self, query_embedding: list[float], threshold: float) -> list[str]:
-        descriptors = self.vector_store.get_all_descriptors(self.settings.processed_documents_dir)
-        matching: list[str] = []
-        for desc in descriptors:
-            emb = desc.get("summary_embedding")
-            if not emb:
-                continue
-            if _cosine_similarity(query_embedding, emb) >= threshold:
-                matching.append(str(desc["document_id"]))
-        return matching
+    # ── Indexing ───────────────────────────────────────────────────────────────
 
     def index_processed_chunks(
         self,
@@ -271,171 +260,91 @@ class DocumentRetriever:
         document_id: str | None = None,
         source_filename: str | None = None,
     ) -> int:
-        records = chunk_records_from_processed_chunks(
-            chunks,
-            document_id=document_id,
-            source_filename=source_filename,
+        """Index chunks into Pool A (sections) and Pool B (blocks)."""
+        section_records = section_records_from_processed_chunks(
+            chunks, document_id=document_id, source_filename=source_filename
         )
-        if not records:
-            return 0
-        self.upsert_chunks(records)
-        return len(records)
-
-    def answer_question(self, question: str, *, top_k: int | None = None) -> QAResponse:
-        retrieved = self.retrieve(question, top_k=top_k)
-        return answer_question(question, retrieved, settings=self.settings)
-
-
-def build_vector_store(settings: Settings) -> VectorStore:
-    if settings.prefer_chroma:
-        try:
-            return ChromaVectorStore(settings.vectorstore_dir)
-        except RuntimeError:
-            pass
-    return JsonVectorStore(settings.vectorstore_dir / "store.json")
-
-
-def load_processed_document_bundle(document_dir: Path) -> tuple[ProcessedDocument | None, list[ProcessedChunk]]:
-    document_payload = _load_json(_artifact_path(document_dir, "document.json"))
-    chunks_payload = _load_json(_artifact_path(document_dir, "chunks.json")) or []
-    document = ProcessedDocument.model_validate(document_payload) if isinstance(document_payload, dict) else None
-    chunks = [ProcessedChunk.model_validate(item) for item in chunks_payload if isinstance(item, dict)]
-    return document, chunks
-
-
-def index_processed_document(
-    document_id_or_path: str | Path,
-    *,
-    settings: Settings | None = None,
-    retriever: DocumentRetriever | None = None,
-) -> int:
-    resolved_settings = settings or Settings()
-    active_retriever = retriever or DocumentRetriever(resolved_settings)
-    document_dir = _resolve_processed_document_dir(document_id_or_path, resolved_settings)
-    document, chunks = load_processed_document_bundle(document_dir)
-    return active_retriever.index_processed_chunks(
-        chunks,
-        document_id=document.document_id if document else document_dir.name,
-        source_filename=document.source_filename if document else None,
-    )
-
-
-def index_all_processed_documents(
-    *,
-    settings: Settings | None = None,
-    retriever: DocumentRetriever | None = None,
-) -> dict[str, int]:
-    resolved_settings = settings or Settings()
-    active_retriever = retriever or DocumentRetriever(resolved_settings)
-    indexed: dict[str, int] = {}
-    for document_dir in sorted(path for path in resolved_settings.processed_documents_dir.iterdir() if path.is_dir()):
-        document, chunks = load_processed_document_bundle(document_dir)
-        if not chunks:
-            continue
-        document_id = document.document_id if document else document_dir.name
-        indexed[document_id] = active_retriever.index_processed_chunks(
-            chunks,
-            document_id=document_id,
-            source_filename=document.source_filename if document else None,
+        block_records = block_records_from_processed_chunks(
+            chunks, document_id=document_id, source_filename=source_filename
         )
-    return indexed
+
+        if section_records:
+            sec_embs = self.embedding_backend.embed_texts([r.text for r in section_records])
+            self.section_store.upsert(
+                [
+                    ChunkRecord(chunk_id=r.section_id, text=r.text, metadata={**r.metadata, "pool": "section"})
+                    for r in section_records
+                ],
+                sec_embs,
+            )
+
+        if block_records:
+            blk_embs = self.embedding_backend.embed_texts([r.text for r in block_records])
+            self.block_store.upsert(
+                [
+                    ChunkRecord(chunk_id=r.block_id, text=r.text, metadata={**r.metadata, "pool": "block"})
+                    for r in block_records
+                ],
+                blk_embs,
+            )
+
+        return len(block_records)
+
+    # ── Retrieval ──────────────────────────────────────────────────────────────
+
+    def retrieve(
+        self,
+        question: str,
+        top_k: int | None = None,
+        *,
+        doc_filter: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
+        """3-step retrieval: section pre-filter → block search → boost + expand."""
+        k = top_k or self.settings.default_top_k
+        query_embedding = self.embedding_backend.embed_texts([question])[0]
+
+        candidate_section_ids = self._candidate_sections(query_embedding, doc_filter)
+        raw_blocks = self._search_blocks(query_embedding, candidate_section_ids, k * 2, doc_filter)
+
+        boosted = _apply_query_boosts(raw_blocks, question)
+        all_blocks = self.block_store.get_all_chunks(doc_filter=doc_filter or None)
+        expanded = _expand_neighbors(boosted[:k], all_blocks)
+        return _sort_by_reading_order(expanded)
+
+    # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _candidate_sections(
+        self,
+        query_embedding: list[float],
+        doc_filter: list[str] | None,
+    ) -> set[str]:
+        results = self.section_store.query(query_embedding, _TOP_SECTIONS * 2, doc_filter=doc_filter or None)
+        above = [r for r in results if r.score >= _SECTION_THRESHOLD][:_TOP_SECTIONS]
+        return {str(r.metadata.get("section_id") or "") for r in above}
+
+    def _search_blocks(
+        self,
+        query_embedding: list[float],
+        candidate_section_ids: set[str],
+        fetch_k: int,
+        doc_filter: list[str] | None,
+    ) -> list[RetrievedChunk]:
+        raw = self.block_store.query(query_embedding, fetch_k * 3, doc_filter=doc_filter or None)
+        if candidate_section_ids:
+            in_sections = [b for b in raw if str(b.metadata.get("section_id") or "") in candidate_section_ids]
+            if in_sections:
+                return in_sections[:fetch_k]
+        return raw[:fetch_k]
 
 
-def answer_corpus_question(
-    question: str,
-    *,
-    settings: Settings | None = None,
-    retriever: DocumentRetriever | None = None,
-    top_k: int | None = None,
-) -> QAResponse:
-    resolved_settings = settings or Settings()
-    active_retriever = retriever or DocumentRetriever(resolved_settings)
-    return active_retriever.answer_question(question, top_k=top_k)
-
-
-def answer_question(
-    question: str,
-    retrieved_chunks: list[RetrievedChunk],
-    *,
-    settings: Settings,
-) -> QAResponse:
-    if not retrieved_chunks:
-        return QAResponse(
-            question=question,
-            answer="I cannot answer from the indexed documents because no relevant context was retrieved.",
-            sources=[],
-        )
-    prompt = _build_qa_prompt(question, retrieved_chunks)
-    answer = _generate_qa_answer(prompt=prompt, settings=settings)
-    return QAResponse(
-        question=question,
-        answer=answer,
-        sources=[_source_payload(chunk) for chunk in retrieved_chunks],
-    )
-
-
-def _build_qa_prompt(question: str, retrieved_chunks: list[RetrievedChunk]) -> str:
-    context_sections = []
-    for index, chunk in enumerate(retrieved_chunks, start=1):
-        page_number = chunk.metadata.get("page_number")
-        label = f"Source {index} | chunk={chunk.chunk_id}"
-        if page_number is not None:
-            label += f" | page={page_number}"
-        context_sections.append(f"[{label}]\n{chunk.text.strip()}")
-    context = "\n\n".join(section for section in context_sections if section.strip())
-    return (
-        "Answer the question using only the provided context.\n"
-        "Do not invent facts.\n"
-        "If the answer is not in the context, say: I cannot answer from the provided context.\n"
-        "Keep the answer concise and cite chunk/page identifiers when available.\n\n"
-        f"Question: {question}\n\n"
-        f"Context:\n{context}"
-    )
-
-
-def _generate_qa_answer(*, prompt: str, settings: Settings) -> str:
-    client = build_openai_client(settings)
-    return client.generate_text(
-        system_prompt="You are a grounded QA assistant.",
-        user_prompt=prompt,
-    ).strip()
-
-
-def _source_payload(chunk: RetrievedChunk) -> dict[str, Any]:
-    return {
-        "chunk_id": chunk.chunk_id,
-        "page_number": chunk.metadata.get("page_number"),
-        "document_id": chunk.metadata.get("document_id"),
-        "source_filename": chunk.metadata.get("source_filename") or chunk.metadata.get("source_file"),
-        "score": round(chunk.score, 4),
-    }
+# ── Shared utility ─────────────────────────────────────────────────────────────
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right:
         return 0.0
     size = min(len(left), len(right))
-    dot = sum(left[index] * right[index] for index in range(size))
-    left_norm = math.sqrt(sum(value * value for value in left[:size])) or 1.0
-    right_norm = math.sqrt(sum(value * value for value in right[:size])) or 1.0
+    dot = sum(left[i] * right[i] for i in range(size))
+    left_norm = math.sqrt(sum(v * v for v in left[:size])) or 1.0
+    right_norm = math.sqrt(sum(v * v for v in right[:size])) or 1.0
     return dot / (left_norm * right_norm)
-
-
-def _artifact_path(document_dir: Path, filename: str) -> Path:
-    direct_path = document_dir / filename
-    if direct_path.exists():
-        return direct_path
-    return document_dir / "structured" / filename
-
-
-def _load_json(path: Path) -> Any:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _resolve_processed_document_dir(document_id_or_path: str | Path, settings: Settings) -> Path:
-    candidate = Path(document_id_or_path)
-    if candidate.exists():
-        return candidate
-    return settings.processed_documents_dir / candidate

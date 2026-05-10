@@ -18,6 +18,12 @@ def main() -> None:
         "--preprocess", action="store_true", help="OCR and preprocess PDFs in the raw documents directory."
     )
     parser.add_argument(
+        "--pdf",
+        type=str,
+        metavar="PATH",
+        help="Preprocess a specific PDF file (overrides --preprocess directory scan).",
+    )
+    parser.add_argument(
         "--index", action="store_true", help="Build the vector index from preprocessed document artifacts."
     )
     parser.add_argument("--ask", type=str, metavar="QUESTION", help="Ask a question against the indexed corpus.")
@@ -25,17 +31,28 @@ def main() -> None:
         "--top-k",
         type=int,
         default=settings.default_top_k,
-        help="Number of retrieved chunks to use for QA (default: %(default)s).",
+        help="Number of block windows to use for QA (default: %(default)s).",
     )
     parser.add_argument(
         "--force-preprocess", action="store_true", help="Re-run preprocessing even if artifacts already exist."
     )
     args = parser.parse_args()
 
-    if not args.preprocess and not args.index and not args.ask:
-        parser.error("Specify at least one of: --preprocess, --index, --ask")
+    if not args.preprocess and not args.pdf and not args.index and not args.ask:
+        parser.error("Specify at least one of: --preprocess, --pdf PATH, --index, --ask")
 
     ensure_data_dirs(settings)
+
+    if args.pdf:
+        from document_Process.pipeline import preprocess_document
+        from pathlib import Path
+
+        pdf_path = Path(args.pdf)
+        if not pdf_path.exists():
+            print(f"File not found: {pdf_path}", file=sys.stderr)
+            sys.exit(1)
+        result = preprocess_document(pdf_path, settings=settings, force=args.force_preprocess)
+        print(f"preprocessed  {pdf_path.name}  →  {result.document_id}  ({result.chunk_count} chunks)")
 
     if args.preprocess:
         from document_Process.pipeline import preprocess_document
@@ -49,28 +66,26 @@ def main() -> None:
             print(f"preprocessed  {pdf_path.name}  →  {result.document_id}  ({result.chunk_count} chunks)")
 
     if args.index:
-        from rag.retrieve import index_all_processed_documents
+        from rag.index import index_all_documents
 
-        store_path = settings.vectorstore_dir / "store.json"
-        if store_path.exists():
-            store_path.unlink()
-        indexed = index_all_processed_documents(settings=settings)
-        print(f"indexed {sum(indexed.values())} chunks across {len(indexed)} document(s)")
+        indexed = index_all_documents(settings=settings)
+        print(f"indexed {sum(indexed.values())} blocks across {len(indexed)} document(s)")
 
     if args.ask:
-        from rag.qa import answer_question_from_frozen_artifacts
+        from rag.qa import answer_question
 
-        response = answer_question_from_frozen_artifacts(args.ask, settings=settings, top_k=args.top_k)
+        response = answer_question(args.ask, settings=settings, top_k=args.top_k)
         print("\nAnswer:")
         print(response.answer)
         if response.sources:
             print("\nSources:")
-            for source in response.sources:
+            for src in response.sources:
                 print(
-                    f"  chunk={source['chunk_id']}  page={source.get('page_number')}  "
-                    f"score={source.get('score'):.4f}  file={source.get('source_filename')}  "
-                    f"regions={source.get('region_ids')}"
+                    f"  block={src.block_id}  section={src.section_title!r}  "
+                    f"page={src.page}  score={src.score:.4f}  type={src.block_type}"
                 )
+        if response.faithfulness:
+            print(f"\nFaithfulness: {response.faithfulness}")
 
 
 if __name__ == "__main__":

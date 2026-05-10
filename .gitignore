@@ -46,7 +46,14 @@ Data/
 htmlcov/
 coverage.xml
 
-doc_pro_test
+# ── Local documents (PDFs for testing — not for version control) ──────────────
+document/
+doc_pro_test/
+
+# ── One-off debug / test output files ────────────────────────────────────────
+debug_pipeline.py
+testresult.txt
+debug/
 
 # ── IDE and OS ────────────────────────────────────────────────────────────────
 .DS_Store

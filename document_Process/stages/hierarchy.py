@@ -1,32 +1,32 @@
 """Stage 4 — Hierarchy Assignment & Section Grouping.
 
 Stamps each OCR block with its parent title/subtitle context, then groups
-blocks into a hierarchical tree: document → sections → subsections → blocks.
+blocks into a clean tree: Document → Section[] → Block[].
 
-For well-structured documents (papers, reports) the heading detector uses
-layout label hints ("title", "doc_title", "paragraph_title") to identify
-section boundaries. Unstructured documents fall back to line-bucket grouping.
+Section boundaries are detected from layout labels ("title", "doc_title",
+"paragraph_title"). Visual regions are inserted into the block stream at their
+reading-order position. Each section's flat_text joins all block texts in order.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
-
-from document_Process.cache import StageCache
-from document_Process.models import (
-    BoundingBox,
+from document_Process.models.base import BoundingBox
+from document_Process.models.internal import (
+    Block,
+    Document,
+    HierarchyResult,
+    LoadResult,
+    OrderResult,
+    Section,
+    VisualRegion,
+)
+from document_Process.models.legacy import (
     LayoutRegion,
-    OCRPageResult,
     OCRTextItem,
     OrderedTextBlock,
     RegionAssociation,
-    Stage1Result,
-    Stage2Result,
-    Stage3Result,
-    Stage4Result,
 )
-from document_Process.models.stage4 import HierarchyLevel, HierarchyNode
 
 logger = logging.getLogger(__name__)
 
@@ -35,40 +35,42 @@ _SUBTITLE_LABELS = {"subtitle"}
 
 
 class HierarchyStage:
-    stage_name = "hierarchy"
-    stage_version = "1.0"
+    def run(
+        self,
+        load_result: LoadResult,
+        order_result: OrderResult,
+        visual_regions: list[VisualRegion],
+    ) -> HierarchyResult:
+        logger.info("Stage 4 — Hierarchy: %s page(s)", load_result.page_count)
 
-    def run(self, s1: Stage1Result, s2: Stage2Result, s3: Stage3Result) -> Stage4Result:
-        logger.info("Stage 4 — Hierarchy: %s page(s)", s1.page_count)
+        item_lookup: dict[str, OCRTextItem] = {
+            item.item_id: item for page in load_result.ocr_pages for item in page.items
+        }
+        region_by_id: dict[str, LayoutRegion] = {r.region_id: r for r in load_result.regions}
+        visual_by_id: dict[str, VisualRegion] = {v.region_id: v for v in visual_regions}
 
-        item_lookup: dict[str, OCRTextItem] = {item.item_id: item for page in s1.ocr_pages for item in page.items}
-        region_by_id: dict[str, LayoutRegion] = {r.region_id: r for r in s1.regions}
+        # Build ordered blocks first — this sets item.region_id via bbox overlap matching,
+        # which _assign_titles needs to map OCR text to title regions.
+        associations, ordered_blocks = self._build_blocks(load_result, order_result, item_lookup, region_by_id)
 
-        # ── Step A: stamp parent_title / parent_subtitle onto each region ─────
-        self._assign_titles(s1.regions, item_lookup)
+        # Stamp parent_title / parent_subtitle on each non-title region (item.region_id now set)
+        self._assign_titles(load_result.regions, item_lookup)
 
-        # ── Build ordered blocks (absorbs AssociationService) ─────────────────
-        associations, ordered_blocks = self._build_blocks(s1, s2, item_lookup, region_by_id)
-
-        # ── Step B: build hierarchy tree ──────────────────────────────────────
-        root, all_nodes = self._build_hierarchy(ordered_blocks, s1.regions)
-        section_ids = [nid for nid, node in all_nodes.items() if node.level == HierarchyLevel.SECTION]
-
-        return Stage4Result(
-            document_id=s1.document_id,
-            ordered_blocks=ordered_blocks,
-            hierarchy_root=root,
-            all_nodes=all_nodes,
-            sections=section_ids,
-            region_associations=associations,
+        # Build Document → Section → Block hierarchy
+        document = self._build_hierarchy(
+            ordered_blocks,
+            load_result.regions,
+            visual_by_id,
+            load_result.document_id,
+            load_result.source_filename,
+            load_result.source_path,
+            load_result.page_count,
         )
 
-    def cache_key(self, s1: Stage1Result, s2: Stage2Result, s3: Stage3Result) -> str:
-        return StageCache.compute_key(
-            s1.document_id,
-            self.stage_name,
-            self.stage_version,
-            s3.stage_version,
+        return HierarchyResult(
+            document=document,
+            ordered_blocks=ordered_blocks,
+            region_associations=associations,
         )
 
     # ── Step A: title propagation ──────────────────────────────────────────────
@@ -100,26 +102,26 @@ class HierarchyStage:
                 region.metadata["parent_title"] = current_title
                 region.metadata["parent_subtitle"] = current_subtitle
 
-    # ── Build ordered blocks (replaces AssociationService) ────────────────────
+    # ── Step B: build ordered blocks ──────────────────────────────────────────
 
     def _build_blocks(
         self,
-        s1: Stage1Result,
-        s2: Stage2Result,
+        load_result: LoadResult,
+        order_result: OrderResult,
         item_lookup: dict[str, OCRTextItem],
         region_by_id: dict[str, LayoutRegion],
     ) -> tuple[list[RegionAssociation], list[OrderedTextBlock]]:
         regions_by_page: dict[int, list[LayoutRegion]] = {}
-        for region in s1.regions:
+        for region in load_result.regions:
             regions_by_page.setdefault(region.page_number, []).append(region)
 
         associations: list[RegionAssociation] = []
         ordered_blocks: list[OrderedTextBlock] = []
         global_index = 1
 
-        for page_order in s2.pages:
-            page_number = page_order.page_number
-            page_items = [item_lookup[iid] for iid in page_order.ordered_item_ids if iid in item_lookup]
+        for page_order in order_result.page_orders:
+            page_number = int(page_order["page_number"])
+            page_items = [item_lookup[iid] for iid in page_order["ordered_item_ids"] if iid in item_lookup]
             page_regions = regions_by_page.get(page_number, [])
             page_blocks: list[OrderedTextBlock] = []
             current_items: list[OCRTextItem] = []
@@ -164,32 +166,29 @@ class HierarchyStage:
 
         return associations, ordered_blocks
 
-    # ── Step B: hierarchy tree ─────────────────────────────────────────────────
+    # ── Step C: build Document → Section → Block hierarchy ────────────────────
 
     def _build_hierarchy(
         self,
-        blocks: list[OrderedTextBlock],
+        ordered_blocks: list[OrderedTextBlock],
         regions: list[LayoutRegion],
-    ) -> tuple[HierarchyNode, dict[str, HierarchyNode]]:
+        visual_by_id: dict[str, VisualRegion],
+        document_id: str,
+        source_filename: str,
+        source_path: str,
+        page_count: int,
+    ) -> Document:
         region_by_id: dict[str, LayoutRegion] = {r.region_id: r for r in regions}
 
-        doc_node = HierarchyNode(
-            node_id="doc_root",
-            level=HierarchyLevel.DOCUMENT,
-            title="Document",
-            page_start=1,
-            page_end=max((b.page_number for b in blocks), default=1),
-        )
-        all_nodes: dict[str, HierarchyNode] = {"doc_root": doc_node}
-
-        section_map: dict[str, str] = {}  # parent_title → section node_id
+        # Map parent_title → Section
+        section_map: dict[str, Section] = {}
         section_order: list[str] = []
+        block_counter = 0
 
-        for block in blocks:
-            region_ids = block.region_ids
+        for block in ordered_blocks:
             parent_title = "untitled"
             parent_subtitle: str | None = None
-            for rid in region_ids:
+            for rid in block.region_ids:
                 region = region_by_id.get(rid)
                 if region:
                     pt = region.metadata.get("parent_title")
@@ -199,32 +198,62 @@ class HierarchyStage:
                         break
 
             if parent_title not in section_map:
-                section_node_id = f"section_{len(section_map)}"
-                section_node = HierarchyNode(
-                    node_id=section_node_id,
-                    level=HierarchyLevel.SECTION,
+                sec = Section(
+                    section_id=f"section_{len(section_map)}",
                     title=parent_title,
                     subtitle=parent_subtitle,
                     page_start=block.page_number,
                     page_end=block.page_number,
-                    parent_node_id="doc_root",
                 )
-                section_map[parent_title] = section_node_id
-                section_order.append(section_node_id)
-                all_nodes[section_node_id] = section_node
-                doc_node.child_node_ids.append(section_node_id)
+                section_map[parent_title] = sec
+                section_order.append(parent_title)
+            else:
+                section_map[parent_title].page_end = max(section_map[parent_title].page_end, block.page_number)
 
-            sec_id = section_map[parent_title]
-            sec_node = all_nodes[sec_id]
-            sec_node.page_end = max(sec_node.page_end, block.page_number)
-            sec_node.block_ids.append(block.block_id)
-            for rid in region_ids:
-                if rid not in sec_node.region_ids:
-                    sec_node.region_ids.append(rid)
-            sec_node.flat_text = (sec_node.flat_text + " " + block.text).strip()
+            sec = section_map[parent_title]
 
-        doc_node.child_node_ids = section_order
-        return doc_node, all_nodes
+            # Check if any region in this block is a visual region — insert description
+            inserted_visual: set[str] = set()
+            for rid in block.region_ids:
+                if rid in visual_by_id and rid not in inserted_visual:
+                    vr = visual_by_id[rid]
+                    vblock = Block(
+                        block_id=f"visual_{rid}",
+                        page_number=vr.page_number,
+                        text=vr.inline_text,
+                        reading_order=block_counter,
+                        region_ids=[rid],
+                    )
+                    sec.blocks.append(vblock)
+                    block_counter += 1
+                    inserted_visual.add(rid)
+
+            # Add the text block itself (skip if it's a pure visual region block with no real text)
+            if block.text.strip():
+                tblock = Block(
+                    block_id=block.block_id,
+                    page_number=block.page_number,
+                    text=block.text,
+                    reading_order=block_counter,
+                    bbox=block.bbox,
+                    item_ids=list(block.item_ids),
+                    region_ids=list(block.region_ids),
+                )
+                sec.blocks.append(tblock)
+                block_counter += 1
+
+        # Build flat_text for each section in reading order
+        for sec in section_map.values():
+            sec.flat_text = "\n\n".join(b.text for b in sec.blocks if b.text.strip()).strip()
+
+        sections = [section_map[t] for t in section_order]
+        return Document(
+            document_id=document_id,
+            source_filename=source_filename,
+            source_path=source_path,
+            page_count=page_count,
+            sections=sections,
+        )
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
@@ -284,80 +313,6 @@ def _build_fallback_blocks(page_number: int, items: list[OCRTextItem], start_ind
     return blocks
 
 
-class AssociationService:
-    """Thin wrapper preserving the old associate() interface for tests."""
-
-    def associate(
-        self,
-        ocr_pages: list[OCRPageResult],
-        reading_order: dict[str, Any],
-        regions: list[LayoutRegion],
-    ) -> tuple[list[RegionAssociation], list[OrderedTextBlock], dict[str, Any]]:
-
-        item_lookup: dict[str, OCRTextItem] = {item.item_id: item for page in ocr_pages for item in page.items}
-        regions_by_page: dict[int, list[LayoutRegion]] = {}
-        for region in regions:
-            regions_by_page.setdefault(region.page_number, []).append(region)
-
-        associations: list[RegionAssociation] = []
-        ordered_blocks: list[OrderedTextBlock] = []
-        page_payloads: list[dict[str, Any]] = []
-        global_index = 1
-
-        for page_entry in reading_order.get("pages", []):
-            page_number = int(page_entry["page_number"])
-            page_items = [item_lookup[iid] for iid in page_entry.get("ordered_item_ids", []) if iid in item_lookup]
-            page_regions = regions_by_page.get(page_number, [])
-            page_blocks: list[OrderedTextBlock] = []
-            current_items: list[OCRTextItem] = []
-            current_region_id: str | None = None
-            current_line_bucket: int | None = None
-
-            for item in page_items:
-                matched_region, overlap_ratio = _best_region_match(item, page_regions)
-                item.region_id = matched_region.region_id if matched_region else None
-                line_bucket = int(item.bbox.y0 // 20)
-                associations.append(
-                    RegionAssociation(
-                        association_id=f"assoc_{len(associations) + 1}",
-                        page_number=page_number,
-                        item_id=item.item_id,
-                        region_id=item.region_id,
-                        region_type=matched_region.region_type if matched_region else None,
-                        overlap_ratio=round(overlap_ratio, 4),
-                    )
-                )
-                group_region_id = item.region_id
-                if current_items and (group_region_id != current_region_id or line_bucket != current_line_bucket):
-                    global_index = _flush_block(page_number, current_items, global_index, page_blocks, ordered_blocks)
-                    current_items = []
-                current_items.append(item)
-                current_region_id = group_region_id
-                current_line_bucket = line_bucket
-
-            if current_items:
-                global_index = _flush_block(page_number, current_items, global_index, page_blocks, ordered_blocks)
-
-            if not page_blocks and page_items:
-                fallback = _build_fallback_blocks(page_number, page_items, global_index)
-                ordered_blocks.extend(fallback)
-                global_index += len(fallback)
-
-            page_payloads.append(
-                {
-                    "page_number": page_number,
-                    "blocks": [b.model_dump(mode="json") for b in page_blocks],
-                    "text": "\n".join(b.text for b in page_blocks if b.text.strip()).strip(),
-                }
-            )
-
-        return (
-            associations,
-            ordered_blocks,
-            {"pages": page_payloads, "full_text": "\n\n".join(p["text"] for p in page_payloads if p["text"]).strip()},
-        )
-
-
 def _make_block(page_number: int, items: list[OCRTextItem], reading_order: int) -> OrderedTextBlock:
     return OrderedTextBlock(
         block_id=f"p{page_number}_block_{reading_order}",
@@ -368,3 +323,5 @@ def _make_block(page_number: int, items: list[OCRTextItem], reading_order: int) 
         bbox=BoundingBox.merge([it.bbox for it in items]),
         reading_order=reading_order,
     )
+
+

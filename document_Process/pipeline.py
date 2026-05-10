@@ -1,133 +1,100 @@
-"""
-document_Process pipeline — PDF/image → frozen artifacts
-=========================================================
+"""document_Process pipeline — PDF/image → frozen artifacts.
 
-Six-stage flow (DocumentPreprocessingPipeline.run):
+Five-stage flow (DocumentPipeline.run):
 
-  1. LoadDetectStage       — SHA-256 ID, PDF render, OCR, layout detection, region cropping
-  2. ReadingOrderStage     — LTR/RTL/TTB sort with multi-column detection
-  3. VisualUnderstandingStage — async VLM descriptions with tiered detail
-  4. HierarchyStage        — title propagation, block grouping, section tree
-  5. ChunkingStage         — async hierarchical chunking + LLM summarization
-  6. ExportStage           — all artifacts to data/processed/<document_id>/
+  1. LoadStage       — SHA-256 ID, PDF render, OCR, layout detection, region cropping
+  2. OrderStage      — LTR/RTL sort with multi-column detection
+  3. VisualStage     — VLM figure descriptions (placeholder by default)
+  4. HierarchyStage  — title propagation, block grouping, Document→Section→Block tree
+  5. SummarizeStage  — chunking + optional LLM section/document summarization
 
-Idempotency: preprocess_document() short-circuits when all artifacts already
-exist (unless force=True).  Per-stage caching (StageCache) skips individual
-stages when their inputs have not changed.
+Output artifacts (data/processed/<document_id>/):
+  document.json       — ProcessedDocument (consumed by rag/retrieve.py)
+  chunks.json         — list[ProcessedChunk] (consumed by rag/retrieve.py)
+  manifest.json       — lightweight metadata
+
+Idempotency: preprocess_document() short-circuits when all three artifacts
+already exist (unless force=True).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from config import Settings
-from document_Process.cache import StageCache
-from document_Process.stages.stage1_load_detect import LoadDetectStage
-from document_Process.stages.stage2_reading_order import ReadingOrderStage
-from document_Process.stages.stage3_visual import VisualUnderstandingStage
-from document_Process.stages.stage4_hierarchy import HierarchyStage
-from document_Process.stages.stage5_chunking import ChunkingStage
-from document_Process.stages.stage6_export import ExportStage
+from document_Process.models.internal import HierarchyResult, LoadResult, SummarizeResult
+from document_Process.models.legacy import (
+    CroppedRegionAsset,
+    ProcessedDocument,
+)
+from document_Process.stages.hierarchy import HierarchyStage
+from document_Process.stages.load import LoadStage
+from document_Process.stages.order import OrderStage
+from document_Process.stages.summarize import SummarizeStage
+from document_Process.stages.visual import VisualStage
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class PreprocessingResult:
+class ProcessingResult:
     document_id: str
     working_dir: Path
-    document_json_path: Path
-    structured_json_path: Path
     page_count: int
     chunk_count: int
     warnings: list[str]
 
 
-class DocumentPreprocessingPipeline:
-    """Wires the six preprocessing stages with per-stage caching."""
+# Keep old name as an alias so rag/ imports that use PreprocessingResult still work
+PreprocessingResult = ProcessingResult
+
+
+class DocumentPipeline:
+    """Wires the five preprocessing stages."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.stage1 = LoadDetectStage(settings)
-        self.stage2 = ReadingOrderStage(settings)
-        self.stage3 = VisualUnderstandingStage(settings)
-        self.stage4 = HierarchyStage()
-        self.stage5 = ChunkingStage(settings)
-        self.stage6 = ExportStage()
+        self._load = LoadStage(settings)
+        self._order = OrderStage(settings)
+        self._visual = VisualStage(settings)
+        self._hierarchy = HierarchyStage()
+        self._summarize = SummarizeStage(settings)
 
-    def run(self, source_path: Path, *, document_id: str | None = None) -> PreprocessingResult:
+    def run(self, source_path: Path, *, document_id: str | None = None) -> ProcessingResult:
         logger.info("Starting document preprocessing: %s", source_path)
 
-        # Stage 1 (sync) — always runs first to establish working_dir and document_id
-        s1 = self.stage1.run(source_path, document_id=document_id)
-        cache = StageCache(s1.working_dir) if self.settings.stage_cache_enabled else _NoCache()
+        load = self._load.run(source_path, document_id=document_id)
+        order = self._order.run(load)
+        visual = self._visual.run(load)
+        hier = self._hierarchy.run(load, order, visual)
+        summ = self._summarize.run(load, hier)
 
-        # Stage 2 (sync)
-        s2_key = self.stage2.cache_key(s1)
-        if cache.is_hit(self.stage2.stage_name, s2_key):
-            logger.info("Stage 2 cache hit — skipping reading order")
-            # Re-run cheaply (no Paddle calls) to rebuild in-memory result
-            s2 = self.stage2.run(s1)
-        else:
-            s2 = self.stage2.run(s1)
-            cache.write(self.stage2.stage_name, s2_key)
+        _export(load.working_dir, load, hier, summ)
+        (load.working_dir / "done").touch()
 
-        # Stage 3 (async)
-        s3_key = self.stage3.cache_key(s1, s2)
-        if cache.is_hit(self.stage3.stage_name, s3_key):
-            logger.info("Stage 3 cache hit — skipping VLM")
-            s3 = asyncio.run(self.stage3.run(s1, s2))
-        else:
-            s3 = asyncio.run(self.stage3.run(s1, s2))
-            cache.write(self.stage3.stage_name, s3_key)
-
-        # Stage 4 (sync)
-        s4_key = self.stage4.cache_key(s1, s2, s3)
-        if cache.is_hit(self.stage4.stage_name, s4_key):
-            logger.info("Stage 4 cache hit — skipping hierarchy")
-            s4 = self.stage4.run(s1, s2, s3)
-        else:
-            s4 = self.stage4.run(s1, s2, s3)
-            cache.write(self.stage4.stage_name, s4_key)
-
-        # Stage 5 (async)
-        s5_key = self.stage5.cache_key(s1, s4)
-        if cache.is_hit(self.stage5.stage_name, s5_key):
-            logger.info("Stage 5 cache hit — skipping chunking/summarization")
-            s5 = asyncio.run(self.stage5.run(s1, s4, visual_descriptions=s3.visual_descriptions))
-        else:
-            s5 = asyncio.run(self.stage5.run(s1, s4, visual_descriptions=s3.visual_descriptions))
-            cache.write(self.stage5.stage_name, s5_key)
-
-        # Stage 6 (sync)
-        s6_key = self.stage6.cache_key(s1, s5)
-        if cache.is_hit(self.stage6.stage_name, s6_key):
-            logger.info("Stage 6 cache hit — skipping export")
-            self.stage6.run(s1, s2, s3, s4, s5)
-        else:
-            self.stage6.run(s1, s2, s3, s4, s5)
-            cache.write(self.stage6.stage_name, s6_key)
-
-        warnings = [i.message for i in (s1.issues + s4.issues + s5.issues) if i.level == "warning"]
+        warnings = [i.message for i in load.issues if i.level == "warning"]
         logger.info(
             "Finished preprocessing %s: %s page(s), %s chunk(s)",
-            s1.document_id,
-            s1.page_count,
-            len(s5.chunks),
+            load.document_id,
+            load.page_count,
+            len(summ.chunks),
         )
-        return PreprocessingResult(
-            document_id=s1.document_id,
-            working_dir=s1.working_dir,
-            document_json_path=s1.working_dir / "document.json",
-            structured_json_path=s1.working_dir / "structured.json",
-            page_count=s1.page_count,
-            chunk_count=len(s5.chunks),
+        return ProcessingResult(
+            document_id=load.document_id,
+            working_dir=load.working_dir,
+            page_count=load.page_count,
+            chunk_count=len(summ.chunks),
             warnings=warnings,
         )
+
+
+# Keep old class name for any callers that used DocumentPreprocessingPipeline
+DocumentPreprocessingPipeline = DocumentPipeline
 
 
 def preprocess_document(
@@ -136,43 +103,129 @@ def preprocess_document(
     settings: Settings | None = None,
     document_id: str | None = None,
     force: bool = False,
-) -> PreprocessingResult:
+) -> ProcessingResult:
     resolved_settings = settings or Settings()
     source_path = Path(source_name_or_path)
     if not source_path.is_absolute() and source_path.parent == Path("."):
         source_path = resolved_settings.raw_documents_dir / source_path
 
-    # Compute document_id without loading Paddle (cheap SHA-256 hash)
-    loader = LoadDetectStage(resolved_settings)
+    loader = LoadStage(resolved_settings)
     resolved_id = document_id or loader._build_document_id(source_path)
     working_dir = resolved_settings.processed_documents_dir / resolved_id
-    manifest_path = working_dir / "manifest.json"
     chunks_path = working_dir / "chunks.json"
     document_path = working_dir / "document.json"
+    manifest_path = working_dir / "manifest.json"
 
     if not force and manifest_path.exists() and chunks_path.exists() and document_path.exists():
         logger.info("Reusing frozen preprocessing artifacts for %s", source_path)
         chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8")))
         manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        return PreprocessingResult(
+        return ProcessingResult(
             document_id=resolved_id,
             working_dir=working_dir,
-            document_json_path=document_path,
-            structured_json_path=working_dir / "structured.json",
             page_count=int(manifest_payload.get("page_count") or 0),
             chunk_count=chunk_count,
             warnings=[],
         )
 
-    pipeline = DocumentPreprocessingPipeline(resolved_settings)
+    pipeline = DocumentPipeline(resolved_settings)
     return pipeline.run(source_path, document_id=resolved_id)
 
 
-class _NoCache:
-    """Drop-in replacement for StageCache when stage_cache_enabled=False."""
+# ── Export ────────────────────────────────────────────────────────────────────
 
-    def is_hit(self, stage_name: str, key: str) -> bool:
-        return False
 
-    def write(self, stage_name: str, key: str) -> None:
-        pass
+def _export(
+    working_dir: Path,
+    load: LoadResult,
+    hier: HierarchyResult,
+    summ: SummarizeResult,
+) -> None:
+    timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    cropped_assets = _collect_cropped_assets(load)
+
+    # Build ProcessedDocument (legacy shape consumed by rag/retrieve.py)
+    full_text = "\n\n".join(b.text for b in hier.ordered_blocks if b.text.strip()).strip()
+    processed_doc = ProcessedDocument(
+        document_id=load.document_id,
+        source_filename=load.source_filename,
+        source_path=str(load.original_copy_path),
+        page_count=load.page_count,
+        full_ordered_text=full_text,
+        region_summaries=[
+            {
+                "region_id": r.region_id,
+                "region_type": r.region_type,
+                "page_number": r.page_number,
+                "bbox": r.bbox.as_list(),
+                "crop_path": r.crop_path,
+                "detector": r.metadata.get("detector"),
+                "label": r.metadata.get("label"),
+                "confidence": r.confidence,
+            }
+            for r in load.regions
+        ],
+        cropped_assets=[a.model_dump(mode="json") for a in cropped_assets],
+        crop_references=[a.crop_path for a in cropped_assets],
+        processing_summary={
+            "page_count": load.page_count,
+            "region_count": len(load.regions),
+            "cropped_asset_count": len(cropped_assets),
+            "chunk_count": len(summ.chunks),
+        },
+    )
+
+    doc_payload = processed_doc.model_dump(mode="json")
+    doc_payload.pop("agent_input", None)
+    doc_payload.pop("agent_output", None)
+    if summ.document_summary:
+        doc_payload["descriptor"] = {"summary": summ.document_summary}
+
+    _write_json(working_dir / "document.json", doc_payload)
+    _write_json(working_dir / "chunks.json", [c.model_dump(mode="json") for c in summ.chunks])
+    _write_json(
+        working_dir / "manifest.json",
+        {
+            "schema_version": "8.0.0",
+            "pipeline_stage": "preprocessing",
+            "processing_status": "completed",
+            "document_id": load.document_id,
+            "source_filename": load.source_filename,
+            "source_path": load.source_path,
+            "working_dir": str(working_dir),
+            "page_count": load.page_count,
+            "chunk_count": len(summ.chunks),
+            "processing_timestamp": timestamp,
+            "artifacts": {
+                "document": "document.json",
+                "chunks": "chunks.json",
+                "manifest": "manifest.json",
+            },
+        },
+    )
+
+
+def _collect_cropped_assets(load: LoadResult) -> list[CroppedRegionAsset]:
+    assets = []
+    for region in load.regions:
+        if region.crop_path:
+            assets.append(
+                CroppedRegionAsset(
+                    asset_id=f"asset_{region.region_id}",
+                    region_id=region.region_id,
+                    page_number=region.page_number,
+                    region_type=region.region_type,
+                    crop_path=region.crop_path,
+                    bbox=region.bbox,
+                )
+            )
+    return assets
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _strip_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text).strip()

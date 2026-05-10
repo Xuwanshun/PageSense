@@ -1,19 +1,16 @@
 """Chunking, embedding, and retrieval services."""
 
-from rag.retrieve import (
-    DocumentRetriever,
-    QAResponse,
-    answer_corpus_question,
-    index_all_processed_documents,
-    index_processed_document,
-    load_processed_document_bundle,
-)
+from rag.index import index_all_documents, index_document
+from rag.qa import BlockWindow, QAResponse, SourceRef, answer_question
+from rag.retrieve import DocumentRetriever, JsonVectorStore
 
 __all__ = [
     "DocumentRetriever",
+    "JsonVectorStore",
     "QAResponse",
-    "answer_corpus_question",
-    "index_all_processed_documents",
-    "index_processed_document",
-    "load_processed_document_bundle",
+    "SourceRef",
+    "BlockWindow",
+    "answer_question",
+    "index_document",
+    "index_all_documents",
 ]

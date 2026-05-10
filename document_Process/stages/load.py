@@ -16,17 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings
-from document_Process.cache import StageCache
-from document_Process.models import (
-    BoundingBox,
+from document_Process.models.base import BoundingBox, ProcessingIssue
+from document_Process.models.internal import LoadResult, PageResult
+from document_Process.models.legacy import (
     CroppedRegionAsset,
     LayoutRegion,
     OCRPageResult,
     OCRTextItem,
-    ProcessingIssue,
-    Stage1Result,
 )
-from document_Process.models.stage1 import PageContext
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 TEXT_BLOCK_LABELS = {
@@ -81,15 +78,12 @@ def _get_paddle_layout_detector() -> Any:
     return LayoutDetection()
 
 
-class LoadDetectStage:
-    stage_name = "load_detect"
-    stage_version = "1.0"
-
+class LoadStage:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         _configure_paddle_env(settings.paddle_cache_dir)
 
-    def run(self, source_path: Path, *, document_id: str | None = None) -> Stage1Result:
+    def run(self, source_path: Path, *, document_id: str | None = None) -> LoadResult:
         logger.info("Stage 1 — Load & Detect: %s", source_path)
         if source_path.suffix.lower() not in SUPPORTED_SUFFIXES:
             raise ValueError(f"Unsupported document type: {source_path.suffix or 'no extension'}")
@@ -117,7 +111,7 @@ class LoadDetectStage:
         regions = self._run_layout(pages, issues)
         self._crop_visual_regions(pages, regions, working_dir / "crops", issues)
 
-        return Stage1Result(
+        return LoadResult(
             document_id=resolved_id,
             source_filename=source_path.name,
             source_path=str(source_path),
@@ -130,14 +124,6 @@ class LoadDetectStage:
             issues=issues,
         )
 
-    def cache_key(self, source_path: Path, document_id: str) -> str:
-        return StageCache.compute_key(
-            document_id,
-            self.stage_name,
-            self.stage_version,
-            str(self.settings.pdf_render_scale),
-        )
-
     def _build_document_id(self, path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as handle:
@@ -145,7 +131,7 @@ class LoadDetectStage:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _run_ocr(self, pages: list[PageContext], issues: list[ProcessingIssue]) -> list[OCRPageResult]:
+    def _run_ocr(self, pages: list[PageResult], issues: list[ProcessingIssue]) -> list[OCRPageResult]:
         logger.info("Running PaddleOCR on %s page(s)", len(pages))
         ocr = _get_paddle_ocr()
         results: list[OCRPageResult] = []
@@ -201,7 +187,7 @@ class LoadDetectStage:
             )
         return results
 
-    def _run_layout(self, pages: list[PageContext], issues: list[ProcessingIssue]) -> list[LayoutRegion]:
+    def _run_layout(self, pages: list[PageResult], issues: list[ProcessingIssue]) -> list[LayoutRegion]:
         logger.info("Running Paddle layout detection on %s page(s)", len(pages))
         detector = _get_paddle_layout_detector()
         regions: list[LayoutRegion] = []
@@ -249,7 +235,7 @@ class LoadDetectStage:
 
     def _crop_visual_regions(
         self,
-        pages: list[PageContext],
+        pages: list[PageResult],
         regions: list[LayoutRegion],
         crops_dir: Path,
         issues: list[ProcessingIssue],
@@ -334,14 +320,14 @@ class LoadDetectStage:
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-def _load_pdf_pages(path: Path, pages_dir: Path, *, render_scale: float) -> list[PageContext]:
+def _load_pdf_pages(path: Path, pages_dir: Path, *, render_scale: float) -> list[PageResult]:
     try:
         import pypdfium2 as pdfium  # type: ignore
     except Exception as exc:
         raise RuntimeError("PDF rendering requires pypdfium2.") from exc
 
     pdf = pdfium.PdfDocument(str(path))
-    pages: list[PageContext] = []
+    pages: list[PageResult] = []
     try:
         for page_index in range(len(pdf)):
             page_number = page_index + 1
@@ -352,7 +338,7 @@ def _load_pdf_pages(path: Path, pages_dir: Path, *, render_scale: float) -> list
             image.save(image_path)
             width, height = image.size
             pages.append(
-                PageContext(
+                PageResult(
                     page_number=page_number,
                     width=float(width),
                     height=float(height),
@@ -364,7 +350,7 @@ def _load_pdf_pages(path: Path, pages_dir: Path, *, render_scale: float) -> list
     return pages
 
 
-def _load_image_page(path: Path, *, page_number: int) -> PageContext:
+def _load_image_page(path: Path, *, page_number: int) -> PageResult:
     try:
         from PIL import Image  # type: ignore
     except Exception as exc:
@@ -372,7 +358,7 @@ def _load_image_page(path: Path, *, page_number: int) -> PageContext:
 
     with Image.open(path) as image:
         width, height = image.size
-    return PageContext(page_number=page_number, width=float(width), height=float(height), page_image_path=path)
+    return PageResult(page_number=page_number, width=float(width), height=float(height), page_image_path=path)
 
 
 def _bbox_from_ocr_payload(rec_boxes: list[Any], dt_polys: list[Any], index: int) -> BoundingBox | None:

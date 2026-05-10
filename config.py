@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # ── OpenAI ────────────────────────────────────────────────────────────────
     openai_api_key: str | None = None
     openai_base_url: str | None = None
-    openai_model: str = "gpt-4.1-mini"
+    synthesis_model: str = "gpt-4.1-nano"
     embedding_model: str = "text-embedding-3-small"
 
     # ── Pipeline tuning ───────────────────────────────────────────────────────
@@ -55,27 +55,26 @@ class Settings(BaseSettings):
     preprocess_chunk_overlap: int = 200
     pdf_render_scale: float = 3.0
     default_top_k: int = 4
-    # Set to True if you have chromadb installed and prefer it over the
-    # built-in JSON vector store.
     prefer_chroma: bool = False
+
+    # ── RAG retrieval ─────────────────────────────────────────────────────────
+    section_filter_threshold: float = 0.55
+    metric_query_threshold: float = 0.35
+    use_faithfulness_check: bool = False
 
     # ── Logging ───────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     log_format: Literal["text", "json"] = "text"
 
     # ── VLM visual summaries ──────────────────────────────────────────────────
-    # When enabled, each cropped table/figure is sent to the vision model.
-    # Cost note: one API call per detected table/figure region per document.
     use_vlm_summaries: bool = False
-    vlm_model: str = "gpt-4o"
+    vlm_model: str = "gpt-4o-mini"
 
-    # ── Document intelligence ─────────────────────────────────────────────────
-    use_document_intelligence: bool = False
-    use_adaptive_chunking: bool = False
-    descriptor_model: str = "gpt-4.1-mini"
+    # ── LLM document intelligence (section + document summarization) ──────────
+    use_document_intelligence: bool = True
 
     # ── Fast mode ─────────────────────────────────────────────────────────────
-    # Skip all VLM and LLM calls (stages 3 and 5). Useful for offline indexing.
+    # Skip all VLM and LLM calls during preprocessing. Useful for offline indexing.
     fast_mode: bool = False
 
     # ── Async concurrency limits ──────────────────────────────────────────────
@@ -88,17 +87,14 @@ class Settings(BaseSettings):
     # ── Per-stage cache ───────────────────────────────────────────────────────
     stage_cache_enabled: bool = True
 
-    # ── S3 (optional remote artifact storage) ────────────────────────────────
-    s3_bucket_name: str | None = None
-
 
 def ensure_data_dirs(settings: Settings) -> None:
     """
     Create data directories if they do not already exist.
 
-    This is called explicitly at application startup (main.py, api/app.py),
-    NOT inside Settings itself. Keeping side effects out of the config object
-    makes Settings safe to instantiate in tests without touching the filesystem.
+    Called explicitly at startup in main.py, NOT inside Settings itself.
+    Keeping side effects out of the config object makes Settings safe to
+    instantiate in tests without touching the filesystem.
     """
     settings.raw_documents_dir.mkdir(parents=True, exist_ok=True)
     settings.processed_documents_dir.mkdir(parents=True, exist_ok=True)
