@@ -78,19 +78,26 @@ class VisualStage:
 
     def run(self, load_result: LoadResult) -> list[VisualRegion]:
         """Describe all visual regions. Uses placeholder unless use_vlm_summaries=True."""
-        visual_regions = [r for r in load_result.regions if r.region_type in _VISUAL_TYPES]
+        visual_regions = [
+            r for r in load_result.regions if r.region_type in _VISUAL_TYPES
+        ]
         logger.info("Stage 3 — Visual: %s visual region(s)", len(visual_regions))
 
         if not self.settings.use_vlm_summaries or not self.settings.openai_api_key:
             if self.settings.use_vlm_summaries and not self.settings.openai_api_key:
-                logger.warning("Stage 3: OPENAI_API_KEY not set — using placeholder descriptions")
+                logger.warning(
+                    "Stage 3: OPENAI_API_KEY not set — using placeholder descriptions"
+                )
             return [_placeholder_description(r) for r in visual_regions]
 
         return asyncio.run(self._run_vlm(visual_regions, load_result))
 
-    async def _run_vlm(self, regions: list[LayoutRegion], load_result: LoadResult) -> list[VisualRegion]:
+    async def _run_vlm(
+        self, regions: list[LayoutRegion], load_result: LoadResult
+    ) -> list[VisualRegion]:
         ocr_text_by_page = {
-            page.page_number: " ".join(item.text for item in page.items).strip() for page in load_result.ocr_pages
+            page.page_number: " ".join(item.text for item in page.items).strip()
+            for page in load_result.ocr_pages
         }
         semaphore = asyncio.Semaphore(self.settings.vlm_concurrency_limit)
         tasks = [self._process_region(r, ocr_text_by_page, semaphore) for r in regions]
@@ -103,23 +110,61 @@ class VisualStage:
         semaphore: asyncio.Semaphore,
     ) -> VisualRegion:
         async with semaphore:
+            return await self._call_vlm_with_retry(
+                region, ocr_text_by_page.get(region.page_number, "")
+            )
+
+    async def _call_vlm_with_retry(
+        self, region: LayoutRegion, context_text: str
+    ) -> VisualRegion:
+        max_retries = self.settings.vlm_retry_max
+        for attempt in range(max_retries):
             try:
                 return await asyncio.get_event_loop().run_in_executor(
                     None,
                     self._call_vlm_sync,
                     region,
-                    ocr_text_by_page.get(region.page_number, ""),
+                    context_text,
                 )
             except Exception as exc:
-                logger.warning("VLM failed for %s: %s", region.region_id, exc)
-                return VisualRegion(
-                    region_id=region.region_id,
-                    page_number=region.page_number,
-                    region_type=region.region_type,
-                    crop_path=region.crop_path,
-                    inline_text="[Visual: could not process]",
-                    is_meaningful=False,
-                )
+                exc_str = str(exc)
+                is_rate_limit = "429" in exc_str or "rate" in exc_str.lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait = 2**attempt
+                    logger.warning(
+                        "[Visual] VLM rate-limit on attempt %d for %s, retrying in %ds",
+                        attempt + 1,
+                        region.region_id,
+                        wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            "[Visual] VLM failed after %d retries for %s: %s",
+                            max_retries,
+                            region.region_id,
+                            exc,
+                        )
+                    else:
+                        logger.warning("VLM failed for %s: %s", region.region_id, exc)
+                    return VisualRegion(
+                        region_id=region.region_id,
+                        page_number=region.page_number,
+                        region_type=region.region_type,
+                        crop_path=region.crop_path,
+                        inline_text="[Visual: could not process after retries]",
+                        is_meaningful=False,
+                    )
+        # Should never reach here
+        return VisualRegion(
+            region_id=region.region_id,
+            page_number=region.page_number,
+            region_type=region.region_type,
+            crop_path=region.crop_path,
+            inline_text="[Visual: could not process after retries]",
+            is_meaningful=False,
+        )
 
     def _call_vlm_sync(self, region: LayoutRegion, context_text: str) -> VisualRegion:
         from openai import OpenAI  # lazy import
@@ -143,10 +188,15 @@ class VisualStage:
             },
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{image_b64}", "detail": "high"},
+                "image_url": {
+                    "url": f"data:image/png;base64,{image_b64}",
+                    "detail": "high",
+                },
             },
         ]
-        client = OpenAI(api_key=self.settings.openai_api_key, base_url=self.settings.openai_base_url)
+        client = OpenAI(
+            api_key=self.settings.openai_api_key, base_url=self.settings.openai_base_url
+        )
         response = client.chat.completions.create(
             model=self.settings.vlm_model,
             messages=[

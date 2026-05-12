@@ -59,19 +59,29 @@ class Settings(BaseSettings):
 
     # ── RAG retrieval ─────────────────────────────────────────────────────────
     section_filter_threshold: float = 0.55
+    section_filter_max: int = 8
     metric_query_threshold: float = 0.35
-    use_faithfulness_check: bool = False
+    use_faithfulness_check: bool = True
+    fast_query_mode: bool = False  # skip faithfulness gate + reduce neighbor expansion
+
+    # ── Pool 0 — document-level pre-filter ───────────────────────────────────
+    use_document_prefilter: bool = True
+    document_filter_threshold: float = 0.45
+    document_filter_top_k: int = 3
 
     # ── Logging ───────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     log_format: Literal["text", "json"] = "text"
 
     # ── VLM visual summaries ──────────────────────────────────────────────────
-    use_vlm_summaries: bool = False
+    use_vlm_summaries: bool = True
     vlm_model: str = "gpt-4o-mini"
+    vision_synthesis_model: str = "gpt-4o-mini"
+    vision_max_image_px: int = 800
 
     # ── LLM document intelligence (section + document summarization) ──────────
     use_document_intelligence: bool = True
+    use_document_summary: bool = True  # generate document-level summary (Pool 0 embed)
 
     # ── Fast mode ─────────────────────────────────────────────────────────────
     # Skip all VLM and LLM calls during preprocessing. Useful for offline indexing.
@@ -80,6 +90,7 @@ class Settings(BaseSettings):
     # ── Async concurrency limits ──────────────────────────────────────────────
     vlm_concurrency_limit: int = 4
     llm_concurrency_limit: int = 8
+    vlm_retry_max: int = 3  # max VLM retries with exponential backoff on 429
 
     # ── Reading order ─────────────────────────────────────────────────────────
     reading_order_line_bucket_px: int = 18

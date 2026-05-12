@@ -65,7 +65,9 @@ def _token_overlap(query: str, content: str) -> int:
     return sum(1 for t in query_tokens if t in content_lower)
 
 
-def _apply_query_boosts(blocks: list[RetrievedChunk], query: str) -> list[RetrievedChunk]:
+def _apply_query_boosts(
+    blocks: list[RetrievedChunk], query: str
+) -> list[RetrievedChunk]:
     """Additive score boosts based on block type, query intent, and token overlap."""
     lowered = query.lower()
     has_visual = any(t in lowered for t in _VISUAL_TERMS)
@@ -171,7 +173,9 @@ class JsonVectorStore:
         mtime = self.store_path.stat().st_mtime
         if self._cached_rows is not None and self._cache_mtime == mtime:
             return self._cached_rows
-        self._cached_rows = json.loads(self.store_path.read_text(encoding="utf-8")).get("rows", [])
+        self._cached_rows = json.loads(self.store_path.read_text(encoding="utf-8")).get(
+            "rows", []
+        )
         self._cache_mtime = mtime
         return self._cached_rows
 
@@ -194,12 +198,28 @@ class JsonVectorStore:
             }
         self._save_rows(list(existing.values()))
 
-    def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
-        filter_set = set(doc_filter) if doc_filter else None
+    def query(
+        self,
+        embedding: list[float],
+        top_k: int,
+        *,
+        doc_filter: list[str] | None = None,
+        filter_doc_ids: set[str] | None = None,
+    ) -> list[RetrievedChunk]:
+        # filter_doc_ids is the new Pool-0-scoped filter; doc_filter is the legacy list form
+        combined: set[str] | None = None
+        if filter_doc_ids is not None:
+            combined = filter_doc_ids
+        elif doc_filter is not None:
+            combined = set(doc_filter)
+
         scored: list[RetrievedChunk] = []
         for row in self._load_rows():
-            if filter_set is not None:
-                if row.get("metadata", {}).get("document_id") not in filter_set:
+            if combined is not None:
+                meta = row.get("metadata", {})
+                # Records may store doc_id under "doc_id" or "document_id"
+                row_doc = meta.get("doc_id") or meta.get("document_id") or ""
+                if row_doc not in combined:
                     continue
             scored.append(
                 RetrievedChunk(
@@ -211,7 +231,9 @@ class JsonVectorStore:
             )
         return sorted(scored, key=lambda c: c.score, reverse=True)[:top_k]
 
-    def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
+    def get_all_chunks(
+        self, *, doc_filter: list[str] | None = None
+    ) -> list[RetrievedChunk]:
         filter_set = set(doc_filter) if doc_filter else None
         return [
             RetrievedChunk(
@@ -221,7 +243,8 @@ class JsonVectorStore:
                 score=0.0,
             )
             for row in self._load_rows()
-            if filter_set is None or row.get("metadata", {}).get("document_id") in filter_set
+            if filter_set is None
+            or row.get("metadata", {}).get("document_id") in filter_set
         ]
 
 
@@ -243,13 +266,21 @@ class DocumentRetriever:
         settings: Settings,
         *,
         embedding_backend: EmbeddingBackend | None = None,
+        document_store: JsonVectorStore | None = None,
         section_store: JsonVectorStore | None = None,
         block_store: JsonVectorStore | None = None,
     ) -> None:
         self.settings = settings
         self.embedding_backend = embedding_backend or build_embedding_backend(settings)
-        self.section_store = section_store or JsonVectorStore(settings.vectorstore_dir / "sections.json")
-        self.block_store = block_store or JsonVectorStore(settings.vectorstore_dir / "blocks.json")
+        self.document_store = document_store or JsonVectorStore(
+            settings.vectorstore_dir / "documents.json"
+        )
+        self.section_store = section_store or JsonVectorStore(
+            settings.vectorstore_dir / "sections.json"
+        )
+        self.block_store = block_store or JsonVectorStore(
+            settings.vectorstore_dir / "blocks.json"
+        )
 
     # ── Indexing ───────────────────────────────────────────────────────────────
 
@@ -269,20 +300,32 @@ class DocumentRetriever:
         )
 
         if section_records:
-            sec_embs = self.embedding_backend.embed_texts([r.text for r in section_records])
+            sec_embs = self.embedding_backend.embed_texts(
+                [r.text for r in section_records]
+            )
             self.section_store.upsert(
                 [
-                    ChunkRecord(chunk_id=r.section_id, text=r.text, metadata={**r.metadata, "pool": "section"})
+                    ChunkRecord(
+                        chunk_id=r.section_id,
+                        text=r.text,
+                        metadata={**r.metadata, "pool": "section"},
+                    )
                     for r in section_records
                 ],
                 sec_embs,
             )
 
         if block_records:
-            blk_embs = self.embedding_backend.embed_texts([r.text for r in block_records])
+            blk_embs = self.embedding_backend.embed_texts(
+                [r.text for r in block_records]
+            )
             self.block_store.upsert(
                 [
-                    ChunkRecord(chunk_id=r.block_id, text=r.text, metadata={**r.metadata, "pool": "block"})
+                    ChunkRecord(
+                        chunk_id=r.block_id,
+                        text=r.text,
+                        metadata={**r.metadata, "pool": "block"},
+                    )
                     for r in block_records
                 ],
                 blk_embs,
@@ -304,7 +347,9 @@ class DocumentRetriever:
         query_embedding = self.embedding_backend.embed_texts([question])[0]
 
         candidate_section_ids = self._candidate_sections(query_embedding, doc_filter)
-        raw_blocks = self._search_blocks(query_embedding, candidate_section_ids, k * 2, doc_filter)
+        raw_blocks = self._search_blocks(
+            query_embedding, candidate_section_ids, k * 2, doc_filter
+        )
 
         boosted = _apply_query_boosts(raw_blocks, question)
         all_blocks = self.block_store.get_all_chunks(doc_filter=doc_filter or None)
@@ -318,7 +363,9 @@ class DocumentRetriever:
         query_embedding: list[float],
         doc_filter: list[str] | None,
     ) -> set[str]:
-        results = self.section_store.query(query_embedding, _TOP_SECTIONS * 2, doc_filter=doc_filter or None)
+        results = self.section_store.query(
+            query_embedding, _TOP_SECTIONS * 2, doc_filter=doc_filter or None
+        )
         above = [r for r in results if r.score >= _SECTION_THRESHOLD][:_TOP_SECTIONS]
         return {str(r.metadata.get("section_id") or "") for r in above}
 
@@ -329,9 +376,15 @@ class DocumentRetriever:
         fetch_k: int,
         doc_filter: list[str] | None,
     ) -> list[RetrievedChunk]:
-        raw = self.block_store.query(query_embedding, fetch_k * 3, doc_filter=doc_filter or None)
+        raw = self.block_store.query(
+            query_embedding, fetch_k * 3, doc_filter=doc_filter or None
+        )
         if candidate_section_ids:
-            in_sections = [b for b in raw if str(b.metadata.get("section_id") or "") in candidate_section_ids]
+            in_sections = [
+                b
+                for b in raw
+                if str(b.metadata.get("section_id") or "") in candidate_section_ids
+            ]
             if in_sections:
                 return in_sections[:fetch_k]
         return raw[:fetch_k]

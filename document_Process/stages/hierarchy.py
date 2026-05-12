@@ -11,6 +11,8 @@ reading-order position. Each section's flat_text joins all block texts in order.
 from __future__ import annotations
 
 import logging
+import re
+import statistics
 from document_Process.models.base import BoundingBox
 from document_Process.models.internal import (
     Block,
@@ -32,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 _TITLE_LABELS = {"title", "doc_title", "paragraph_title"}
 _SUBTITLE_LABELS = {"subtitle"}
+_CAPTION_LABELS = frozenset(["caption", "figure_caption", "table_caption"])
+_VISUAL_REGION_TYPES = frozenset(["figure", "table", "chart", "image"])
+_SECTION_NUMBER_RE = re.compile(r"^(?:[A-Z]\.|\d+(?:\.\d+)*)\s+\S")
 
 
 class HierarchyStage:
@@ -46,15 +51,29 @@ class HierarchyStage:
         item_lookup: dict[str, OCRTextItem] = {
             item.item_id: item for page in load_result.ocr_pages for item in page.items
         }
-        region_by_id: dict[str, LayoutRegion] = {r.region_id: r for r in load_result.regions}
+        region_by_id: dict[str, LayoutRegion] = {
+            r.region_id: r for r in load_result.regions
+        }
         visual_by_id: dict[str, VisualRegion] = {v.region_id: v for v in visual_regions}
 
         # Build ordered blocks first — this sets item.region_id via bbox overlap matching,
         # which _assign_titles needs to map OCR text to title regions.
-        associations, ordered_blocks = self._build_blocks(load_result, order_result, item_lookup, region_by_id)
+        associations, ordered_blocks = self._build_blocks(
+            load_result, order_result, item_lookup, region_by_id
+        )
+
+        # Promote text_block regions that look like section headings (two-column PDF fix).
+        self._promote_title_candidates(load_result.regions, item_lookup)
 
         # Stamp parent_title / parent_subtitle on each non-title region (item.region_id now set)
         self._assign_titles(load_result.regions, item_lookup)
+
+        # Second-pass: recover numbered section headers misclassified as text_block.
+        page_widths = {p.page_number: p.width for p in load_result.pages}
+        self._recover_titles(load_result.regions, item_lookup, page_widths)
+
+        # Link caption regions to their adjacent figure/table region.
+        self._link_captions(load_result.regions, ordered_blocks)
 
         # Build Document → Section → Block hierarchy
         document = self._build_hierarchy(
@@ -84,7 +103,9 @@ class HierarchyStage:
         for item in item_lookup.values():
             if item.region_id:
                 existing = block_text_by_region.get(item.region_id, "")
-                block_text_by_region[item.region_id] = (existing + " " + item.text).strip() if existing else item.text
+                block_text_by_region[item.region_id] = (
+                    (existing + " " + item.text).strip() if existing else item.text
+                )
 
         current_title = "untitled"
         current_subtitle: str | None = None
@@ -101,6 +122,184 @@ class HierarchyStage:
             else:
                 region.metadata["parent_title"] = current_title
                 region.metadata["parent_subtitle"] = current_subtitle
+
+    # ── Step A2: promote text_block regions to title (two-column heuristic) ───
+
+    def _promote_title_candidates(
+        self,
+        regions: list[LayoutRegion],
+        item_lookup: dict[str, OCRTextItem],
+    ) -> None:
+        text_by_region: dict[str, str] = {}
+        for item in item_lookup.values():
+            if item.region_id:
+                existing = text_by_region.get(item.region_id, "")
+                text_by_region[item.region_id] = (
+                    (existing + " " + item.text).strip() if existing else item.text
+                )
+
+        pages: dict[int, list[LayoutRegion]] = {}
+        for region in regions:
+            pages.setdefault(region.page_number, []).append(region)
+
+        for page_num, page_regions in pages.items():
+            text_blocks = [r for r in page_regions if r.region_type == "text_block"]
+            if len(text_blocks) < 2:
+                continue
+
+            # Two-column detection: x0 values should cluster away from page centre.
+            x0_values = [r.bbox.x0 for r in text_blocks if r.bbox]
+            if len(x0_values) < 2:
+                continue
+            x_min, x_max = min(x0_values), max(x0_values)
+            x_range = x_max - x_min
+            if x_range < 50:
+                continue
+            mid_lo = x_min + x_range * 0.3
+            mid_hi = x_min + x_range * 0.7
+            mid_count = sum(1 for x in x0_values if mid_lo <= x <= mid_hi)
+            if mid_count / len(x0_values) >= 0.15:
+                continue  # not two-column
+
+            heights = [
+                r.bbox.y1 - r.bbox.y0
+                for r in text_blocks
+                if r.bbox and r.bbox.y1 > r.bbox.y0
+            ]
+            if not heights:
+                continue
+            median_h = statistics.median(heights)
+
+            for region in text_blocks:
+                # Skip if already detected as a heading by the layout model
+                if region.metadata.get("label", "") in _TITLE_LABELS | _SUBTITLE_LABELS:
+                    continue
+                text = text_by_region.get(region.region_id, "").strip()
+                if not text or len(text) > 60:
+                    continue
+                if not _SECTION_NUMBER_RE.match(text):
+                    continue
+                if not region.bbox:
+                    continue
+
+                # Check that the block is not overlapping more than one peer on the same line.
+                y_center = (region.bbox.y0 + region.bbox.y1) / 2
+                overlapping = [
+                    r
+                    for r in text_blocks
+                    if r.region_id != region.region_id
+                    and r.bbox
+                    and abs((r.bbox.y0 + r.bbox.y1) / 2 - y_center) < 5
+                    and r.bbox.x0 < region.bbox.x1
+                    and r.bbox.x1 > region.bbox.x0
+                ]
+                if len(overlapping) > 1:
+                    continue
+
+                h = region.bbox.y1 - region.bbox.y0
+                if h >= 1.05 * median_h:
+                    reason = "height"
+                else:
+                    reason = "pattern-only"
+
+                region.metadata["label"] = "title"
+                logger.debug(
+                    "[Hierarchy] promoted 'text_block' → 'title': %r on page %d (reason: %s)",
+                    text[:60],
+                    page_num,
+                    reason,
+                )
+
+    # ── Step A2b: second-pass title recovery (pattern + width, post-assign) ─────
+
+    def _recover_titles(
+        self,
+        regions: list[LayoutRegion],
+        item_lookup: dict[str, OCRTextItem],
+        page_widths: dict[int, float],
+    ) -> None:
+        text_by_region: dict[str, str] = {}
+        for item in item_lookup.values():
+            if item.region_id:
+                existing = text_by_region.get(item.region_id, "")
+                text_by_region[item.region_id] = (
+                    (existing + " " + item.text).strip() if existing else item.text
+                )
+
+        current_recovered: str | None = None
+        for region in sorted(regions, key=lambda r: (r.page_number, r.bbox.y0)):
+            label = region.metadata.get("label", "")
+            parent_title = region.metadata.get("parent_title")
+
+            if label in _TITLE_LABELS:
+                current_recovered = None
+                continue
+
+            if parent_title is None:
+                continue
+
+            if parent_title != "untitled":
+                current_recovered = None
+                continue
+
+            # Region is in the "untitled" zone — check for recovery.
+            text = text_by_region.get(region.region_id, "").strip()
+            page_width = page_widths.get(region.page_number, 0.0)
+            region_width = (region.bbox.x1 - region.bbox.x0) if region.bbox else 0.0
+
+            if (
+                text
+                and len(text) <= 60
+                and _SECTION_NUMBER_RE.match(text)
+                and page_width > 0
+                and region_width > 0.4 * page_width
+            ):
+                region.metadata["label"] = "title"
+                region.metadata.pop("parent_title", None)
+                region.metadata.pop("parent_subtitle", None)
+                current_recovered = text[:200]
+                logger.debug(
+                    '[Hierarchy] recovered title: "%s" page %d (pattern match)',
+                    text[:60],
+                    region.page_number,
+                )
+            elif current_recovered is not None:
+                region.metadata["parent_title"] = current_recovered
+
+    # ── Step A3: link caption regions to adjacent figure/table ─────────────────
+
+    def _link_captions(
+        self,
+        regions: list[LayoutRegion],
+        ordered_blocks: list[OrderedTextBlock],
+    ) -> None:
+        region_by_id: dict[str, LayoutRegion] = {r.region_id: r for r in regions}
+
+        for i, block in enumerate(ordered_blocks):
+            is_caption = any(
+                region_by_id.get(rid) is not None
+                and region_by_id[rid].metadata.get("label", "") in _CAPTION_LABELS
+                for rid in block.region_ids
+            )
+            if not is_caption:
+                continue
+
+            figure_region_id: str | None = None
+            for j in (i - 1, i + 1):
+                if 0 <= j < len(ordered_blocks):
+                    for rid in ordered_blocks[j].region_ids:
+                        region = region_by_id.get(rid)
+                        if region and region.region_type in _VISUAL_REGION_TYPES:
+                            figure_region_id = rid
+                            break
+                if figure_region_id:
+                    break
+
+            if figure_region_id:
+                for rid in block.region_ids:
+                    region = region_by_id.get(rid)
+                    if region:
+                        region.metadata["linked_region_id"] = figure_region_id
 
     # ── Step B: build ordered blocks ──────────────────────────────────────────
 
@@ -121,7 +320,11 @@ class HierarchyStage:
 
         for page_order in order_result.page_orders:
             page_number = int(page_order["page_number"])
-            page_items = [item_lookup[iid] for iid in page_order["ordered_item_ids"] if iid in item_lookup]
+            page_items = [
+                item_lookup[iid]
+                for iid in page_order["ordered_item_ids"]
+                if iid in item_lookup
+            ]
             page_regions = regions_by_page.get(page_number, [])
             page_blocks: list[OrderedTextBlock] = []
             current_items: list[OCRTextItem] = []
@@ -138,14 +341,25 @@ class HierarchyStage:
                         page_number=page_number,
                         item_id=item.item_id,
                         region_id=item.region_id,
-                        region_type=matched_region.region_type if matched_region else None,
+                        region_type=matched_region.region_type
+                        if matched_region
+                        else None,
                         overlap_ratio=round(overlap_ratio, 4),
                     )
                 )
 
                 group_region_id = item.region_id
-                if current_items and (group_region_id != current_region_id or line_bucket != current_line_bucket):
-                    global_index = _flush_block(page_number, current_items, global_index, page_blocks, ordered_blocks)
+                if current_items and (
+                    group_region_id != current_region_id
+                    or line_bucket != current_line_bucket
+                ):
+                    global_index = _flush_block(
+                        page_number,
+                        current_items,
+                        global_index,
+                        page_blocks,
+                        ordered_blocks,
+                    )
                     current_items = []
 
                 current_items.append(item)
@@ -153,7 +367,13 @@ class HierarchyStage:
                 current_line_bucket = line_bucket
 
             if current_items:
-                global_index = _flush_block(page_number, current_items, global_index, page_blocks, ordered_blocks)
+                global_index = _flush_block(
+                    page_number,
+                    current_items,
+                    global_index,
+                    page_blocks,
+                    ordered_blocks,
+                )
 
             if not page_blocks and page_items:
                 fallback = _build_fallback_blocks(page_number, page_items, global_index)
@@ -208,7 +428,9 @@ class HierarchyStage:
                 section_map[parent_title] = sec
                 section_order.append(parent_title)
             else:
-                section_map[parent_title].page_end = max(section_map[parent_title].page_end, block.page_number)
+                section_map[parent_title].page_end = max(
+                    section_map[parent_title].page_end, block.page_number
+                )
 
             sec = section_map[parent_title]
 
@@ -244,7 +466,9 @@ class HierarchyStage:
 
         # Build flat_text for each section in reading order
         for sec in section_map.values():
-            sec.flat_text = "\n\n".join(b.text for b in sec.blocks if b.text.strip()).strip()
+            sec.flat_text = "\n\n".join(
+                b.text for b in sec.blocks if b.text.strip()
+            ).strip()
 
         sections = [section_map[t] for t in section_order]
         return Document(
@@ -259,7 +483,9 @@ class HierarchyStage:
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-def _best_region_match(item: OCRTextItem, regions: list[LayoutRegion]) -> tuple[LayoutRegion | None, float]:
+def _best_region_match(
+    item: OCRTextItem, regions: list[LayoutRegion]
+) -> tuple[LayoutRegion | None, float]:
     best: LayoutRegion | None = None
     best_ratio = 0.0
     item_area = item.bbox.area() or 1.0
@@ -289,7 +515,9 @@ def _flush_block(
     return global_index + 1
 
 
-def _build_fallback_blocks(page_number: int, items: list[OCRTextItem], start_index: int) -> list[OrderedTextBlock]:
+def _build_fallback_blocks(
+    page_number: int, items: list[OCRTextItem], start_index: int
+) -> list[OrderedTextBlock]:
     blocks: list[OrderedTextBlock] = []
     current: list[OCRTextItem] = []
     current_bucket: int | None = None
@@ -313,7 +541,9 @@ def _build_fallback_blocks(page_number: int, items: list[OCRTextItem], start_ind
     return blocks
 
 
-def _make_block(page_number: int, items: list[OCRTextItem], reading_order: int) -> OrderedTextBlock:
+def _make_block(
+    page_number: int, items: list[OCRTextItem], reading_order: int
+) -> OrderedTextBlock:
     return OrderedTextBlock(
         block_id=f"p{page_number}_block_{reading_order}",
         page_number=page_number,
@@ -323,5 +553,3 @@ def _make_block(page_number: int, items: list[OCRTextItem], reading_order: int) 
         bbox=BoundingBox.merge([it.bbox for it in items]),
         reading_order=reading_order,
     )
-
-

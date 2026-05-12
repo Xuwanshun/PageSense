@@ -62,3 +62,4 @@ debug/
 *.swp
 infra/.terraform/
 .claude
+test.md

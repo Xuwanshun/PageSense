@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from io import BytesIO
+
+from PIL import Image
 
 from config import Settings
 from document_Process.clients import OpenAIJSONModelClient
 from rag.chunk import RetrievedChunk
 from rag.retrieve import (
-    _TOP_SECTIONS,
     DocumentRetriever,
     _apply_query_boosts,
     _sort_by_reading_order,
@@ -61,6 +66,9 @@ class SourceRef:
     page: int
     score: float
     block_type: str
+    crop_paths: list[str] = field(default_factory=list)
+    doc_id: str = ""
+    source_filename: str = ""
 
 
 @dataclass
@@ -92,10 +100,12 @@ def answer_question(
     """Answer a question from the indexed corpus.
 
     Pipeline:
-    1. Section pre-filter  — cosine search Pool A → candidate section IDs.
-    2. Block retrieval     — search Pool B, apply boosts, return top candidates.
-    3. Synthesis           — build context, one LLM call, cite section + page.
-    4. Faithfulness gate   — optional second LLM call (USE_FAITHFULNESS_CHECK).
+    1.   Metric query detection  — no embedding, no LLM.
+    1.5. Document pre-filter     — Pool 0 cosine search → candidate doc IDs.
+    2.   Section pre-filter      — Pool A cosine search scoped to candidate docs.
+    3.   Block retrieval         — Pool B scoped to candidate sections/docs.
+    4.   Synthesis               — one LLM call.
+    5.   Faithfulness gate       — optional second LLM call.
     """
     resolved = settings or Settings()
     retriever = DocumentRetriever(resolved)
@@ -104,8 +114,27 @@ def answer_question(
     query_embedding = retriever.embedding_backend.embed_texts([question])[0]
 
     is_metric_query = _detect_metric_query(question)
-    candidate_sections = _section_prefilter(query_embedding, retriever, resolved, is_metric_query)
-    raw_blocks = _retrieve_blocks(question, query_embedding, candidate_sections, retriever, k, is_metric_query)
+
+    # Step 1.5 — Document pre-filter (Pool 0)
+    candidate_doc_ids = _document_prefilter(query_embedding, retriever, resolved)
+
+    candidate_sections = _section_prefilter(
+        question,
+        query_embedding,
+        retriever,
+        resolved,
+        is_metric_query,
+        candidate_doc_ids,
+    )
+    raw_blocks = _retrieve_blocks(
+        question,
+        query_embedding,
+        candidate_sections,
+        retriever,
+        k,
+        is_metric_query,
+        candidate_doc_ids,
+    )
 
     if not raw_blocks:
         return QAResponse(
@@ -115,11 +144,16 @@ def answer_question(
             faithfulness=None,
         )
 
-    windows = _build_windows(raw_blocks[:k], retriever.block_store.get_all_chunks())
+    neighbor_window = 1 if resolved.fast_query_mode else _NEIGHBOR_WINDOW
+    windows = _build_windows(
+        raw_blocks[:k], retriever.block_store.get_all_chunks(), window=neighbor_window
+    )
     answer = _synthesize(question, windows, resolved)
-    answer, faithfulness_label = _run_faithfulness_gate(question, answer, windows, resolved)
+    answer, faithfulness_label = _run_faithfulness_gate(
+        question, answer, windows, resolved
+    )
 
-    sources = _collect_sources(windows)
+    sources = _collect_sources(windows, resolved)
     return QAResponse(
         question=question,
         answer=answer,
@@ -128,30 +162,148 @@ def answer_question(
     )
 
 
-# ── Step 1: Section pre-filter ─────────────────────────────────────────────────
+# ── Step 1: Metric detection ───────────────────────────────────────────────────
 
 
 def _detect_metric_query(question: str) -> bool:
     tokens = set(question.lower().split())
-    return sum(1 for t in tokens if t in _METRIC_TERMS) >= _METRIC_TERM_MIN
+    if sum(1 for t in tokens if t in _METRIC_TERMS) >= _METRIC_TERM_MIN:
+        return True
+    # Decimal numbers (e.g. "93.8", "0.85") or percentage values signal metric intent.
+    return bool(re.search(r"\d+\.\d+", question) or re.search(r"\d+%", question))
+
+
+# ── Step 1.5: Document pre-filter (Pool 0) ────────────────────────────────────
+
+
+def _document_prefilter(
+    query_embedding: list[float],
+    retriever: DocumentRetriever,
+    settings: Settings,
+) -> set[str]:
+    """Return set of doc_ids that pass Pool 0. Empty set means search all docs."""
+    if not settings.use_document_prefilter:
+        return set()
+
+    top_k = settings.document_filter_top_k
+    results = retriever.document_store.query(query_embedding, top_k * 2)
+    passing = [r for r in results if r.score >= settings.document_filter_threshold][
+        :top_k
+    ]
+
+    if passing:
+        candidate_doc_ids = {str(r.metadata.get("doc_id") or "") for r in passing}
+        logger.info(
+            "[QA] document pre-filter: %d doc(s) pass threshold %.2f — %s",
+            len(candidate_doc_ids),
+            settings.document_filter_threshold,
+            [
+                r.metadata.get("source_filename", r.metadata.get("doc_id", "?")[:8])
+                for r in passing
+            ],
+        )
+        return candidate_doc_ids
+    else:
+        logger.info(
+            "[QA] document pre-filter: no documents pass threshold %.2f — global fallback",
+            settings.document_filter_threshold,
+        )
+        return set()
+
+
+# ── Step 2: Section pre-filter ────────────────────────────────────────────────
 
 
 def _section_prefilter(
+    question: str,
     query_embedding: list[float],
     retriever: DocumentRetriever,
     settings: Settings,
     is_metric_query: bool = False,
+    candidate_doc_ids: set[str] | None = None,
 ) -> set[str]:
     threshold = settings.section_filter_threshold
     if is_metric_query:
         threshold = min(threshold, settings.metric_query_threshold)
-        logger.debug("[QA] metric query detected — lowering section threshold to %.2f", threshold)
-    results = retriever.section_store.query(query_embedding, _TOP_SECTIONS * 2)
-    above = [r for r in results if r.score >= threshold][:_TOP_SECTIONS]
-    return {str(r.metadata.get("section_id") or "") for r in above}
+        logger.debug(
+            "[QA] metric query detected — lowering section threshold to %.2f", threshold
+        )
+
+    filter_ids = candidate_doc_ids if candidate_doc_ids else None
+    all_results = retriever.section_store.query(
+        query_embedding, settings.section_filter_max * 4, filter_doc_ids=filter_ids
+    )
+    above_threshold = [r for r in all_results if r.score >= threshold]
+    if above_threshold:
+        top_score = above_threshold[0].score
+        candidate_sections = [
+            r for r in above_threshold if r.score >= top_score - 0.12
+        ][: settings.section_filter_max]
+    else:
+        candidate_sections = []
+
+    # Name-match injection: if the query contains words that appear in a section
+    # title, inject that section regardless of cosine score.
+    query_words = {w.lower() for w in re.findall(r"\b\w{5,}\b", question)}
+    if query_words:
+        all_section_records = retriever.section_store.get_all_chunks()
+        if candidate_doc_ids:
+            all_section_records = [
+                r
+                for r in all_section_records
+                if str(r.metadata.get("doc_id") or "") in candidate_doc_ids
+            ]
+        already = {str(r.metadata.get("section_id") or "") for r in candidate_sections}
+        for record in all_section_records:
+            if len(candidate_sections) >= settings.section_filter_max:
+                break
+            if str(record.metadata.get("section_id") or "") in already:
+                continue
+            title_words = {
+                w.lower()
+                for w in re.findall(
+                    r"\b\w{5,}\b",
+                    record.metadata.get("section_title", "") + " " + record.text,
+                )
+            }
+            if query_words & title_words:
+                candidate_sections.append(record)
+                already.add(str(record.metadata.get("section_id") or ""))
+                logger.debug(
+                    "[QA] name-match inject: section %r (doc %s)",
+                    record.metadata.get("section_title", ""),
+                    str(record.metadata.get("doc_id") or "")[:8],
+                )
+
+    # Fix I — multi-document diversity injection
+    # If Pool 0 identified multiple candidate docs but Pool A only selected sections
+    # from a subset of them, force-include the best section from missing docs.
+    if candidate_doc_ids and len(candidate_doc_ids) > 1:
+        represented_docs = {
+            str(r.metadata.get("doc_id") or "") for r in candidate_sections
+        }
+        missing_docs = candidate_doc_ids - represented_docs
+        for missing_doc_id in missing_docs:
+            best = next(
+                (
+                    r
+                    for r in all_results
+                    if str(r.metadata.get("doc_id") or "") == missing_doc_id
+                ),
+                None,
+            )
+            if best:
+                candidate_sections.append(best)
+                logger.info(
+                    "[QA] diversity inject: added section from %s (score %.3f) for multi-doc coverage",
+                    missing_doc_id[:8],
+                    best.score,
+                )
+
+    return {str(r.metadata.get("section_id") or "") for r in candidate_sections}
 
 
-# ── Step 2: Block retrieval + boost ────────────────────────────────────────────
+# ── Step 3: Block retrieval + boost ────────────────────────────────────────────
 
 
 def _retrieve_blocks(
@@ -161,27 +313,33 @@ def _retrieve_blocks(
     retriever: DocumentRetriever,
     top_k: int,
     is_metric_query: bool = False,
+    candidate_doc_ids: set[str] | None = None,
 ) -> list[RetrievedChunk]:
     fetch_k = top_k * 2
-    raw = retriever.block_store.query(query_embedding, fetch_k * 3)
+    filter_ids = candidate_doc_ids if candidate_doc_ids else None
+    raw = retriever.block_store.query(
+        query_embedding, fetch_k * 3, filter_doc_ids=filter_ids
+    )
 
     if candidate_sections:
-        scoped = [b for b in raw if str(b.metadata.get("section_id") or "") in candidate_sections]
+        scoped = [
+            b
+            for b in raw
+            if str(b.metadata.get("section_id") or "") in candidate_sections
+        ]
         if scoped:
             candidate_blocks = scoped[:fetch_k]
         else:
             candidate_blocks = raw[:fetch_k]
 
-        # A2: for metric queries, always supplement with the top 2 globally-scored
-        # blocks that fall outside the candidate sections. This catches blocks whose
-        # content is about results/metrics but whose *section* was misdetected by the
-        # layout model (e.g. "6 Results" classified as text_block → absorbed into
-        # "5.4 Regularization" which scores ~0.16 at Pool A level and is never a
-        # candidate section). Pool B embeddings still carry the real block text, so
-        # cosine search there finds the right block even though Pool A missed it.
+        # For metric queries, supplement with top 2 globally-scored blocks outside
+        # candidate sections (scoped to candidate_doc_ids to avoid irrelevant docs).
         if is_metric_query:
             seen_ids = {b.chunk_id for b in candidate_blocks}
-            global_extra = [b for b in raw if b.chunk_id not in seen_ids][:2]
+            supplement_raw = retriever.block_store.query(
+                query_embedding, 4, filter_doc_ids=filter_ids
+            )
+            global_extra = [b for b in supplement_raw if b.chunk_id not in seen_ids][:2]
             candidate_blocks = candidate_blocks + global_extra
     else:
         candidate_blocks = raw[:fetch_k]
@@ -240,7 +398,11 @@ def _build_windows(
             BlockWindow(
                 anchor_block_id=anchor.chunk_id,
                 section_title=anchor.metadata.get("section_title", ""),
-                page=int(anchor.metadata.get("page") or anchor.metadata.get("page_number") or 0),
+                page=int(
+                    anchor.metadata.get("page")
+                    or anchor.metadata.get("page_number")
+                    or 0
+                ),
                 blocks=deduped,
                 score=anchor.score,
             )
@@ -254,9 +416,54 @@ def _build_windows(
 
 def _synthesize(question: str, windows: list[BlockWindow], settings: Settings) -> str:
     context = _build_context(windows, settings)
-    user_prompt = f"Question: {question}\n\nRetrieved blocks:\n{context}"
+    user_text = f"Question: {question}\n\nRetrieved blocks:\n{context}"
     client = _synthesis_client(settings)
-    return client.generate_text(system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt).strip()
+
+    if settings.use_vlm_summaries:
+        seen_crops: set[str] = set()
+        image_parts: list[dict] = []
+        for window in windows:
+            for block in window.blocks:
+                crops = block.metadata.get("crop_references") or []
+                if crops and crops[0] not in seen_crops:
+                    seen_crops.add(crops[0])
+                    try:
+                        img = Image.open(crops[0]).convert("RGB")
+                        max_px = settings.vision_max_image_px
+                        if max(img.width, img.height) > max_px:
+                            scale = max_px / max(img.width, img.height)
+                            img = img.resize(
+                                (int(img.width * scale), int(img.height * scale)),
+                                Image.LANCZOS,
+                            )
+                        buf = BytesIO()
+                        img.save(buf, format="JPEG", quality=85)
+                        b64 = base64.b64encode(buf.getvalue()).decode()
+                        image_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                            }
+                        )
+                    except Exception:
+                        pass
+        if image_parts:
+            response = client.client.chat.completions.create(
+                model=settings.vision_synthesis_model,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": user_text}] + image_parts,
+                    },
+                ],
+            )
+            return str(response.choices[0].message.content or "").strip()
+
+    return client.generate_text(
+        system_prompt=_SYSTEM_PROMPT, user_prompt=user_text
+    ).strip()
 
 
 def _build_context(windows: list[BlockWindow], settings: Settings) -> str:
@@ -272,10 +479,7 @@ def _build_context(windows: list[BlockWindow], settings: Settings) -> str:
             body = content
             crop_refs = meta.get("crop_references") or []
             if crop_refs and not settings.use_vlm_summaries:
-                body += (
-                    f"\n[Note: this block has an associated figure/table image at {crop_refs[0]}"
-                    " — enable USE_VLM_SUMMARIES=true to include visual descriptions]"
-                )
+                body += f"\n[Visual asset available: {crop_refs[0]}]"
             parts.append(f"{header}\n{body}")
     return "\n\n".join(p for p in parts if p.strip())
 
@@ -289,7 +493,7 @@ def _run_faithfulness_gate(
     windows: list[BlockWindow],
     settings: Settings,
 ) -> tuple[str, str | None]:
-    if not settings.use_faithfulness_check:
+    if settings.fast_query_mode or not settings.use_faithfulness_check:
         return answer, None
 
     flat_blocks = [b for w in windows for b in w.blocks]
@@ -310,7 +514,15 @@ def _run_faithfulness_gate(
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
 
-def _collect_sources(windows: list[BlockWindow]) -> list[SourceRef]:
+def _collect_sources(windows: list[BlockWindow], settings: Settings) -> list[SourceRef]:
+    doc_ids = {
+        str(block.metadata.get("doc_id") or "")
+        for window in windows
+        for block in window.blocks
+        if block.metadata.get("doc_id")
+    }
+    filename_cache = _load_manifest_filenames(doc_ids, settings)
+
     seen: set[str] = set()
     sources: list[SourceRef] = []
     for window in windows:
@@ -323,6 +535,14 @@ def _collect_sources(windows: list[BlockWindow]) -> list[SourceRef]:
             # was computed for them). Use the parent window's anchor score so that
             # all sources in the same window report a meaningful similarity value.
             score = block.score if block.score > 0.0 else window.score
+            doc_id = str(meta.get("doc_id") or "")
+            raw_crops = list(meta.get("crop_references") or [])
+            seen_crops: set[str] = set()
+            crop_paths: list[str] = []
+            for p in raw_crops:
+                if p not in seen_crops:
+                    seen_crops.add(p)
+                    crop_paths.append(p)
             sources.append(
                 SourceRef(
                     block_id=block.chunk_id,
@@ -330,14 +550,35 @@ def _collect_sources(windows: list[BlockWindow]) -> list[SourceRef]:
                     page=int(meta.get("page") or meta.get("page_number") or 0),
                     score=round(score, 4),
                     block_type=meta.get("block_type", "paragraph"),
+                    crop_paths=crop_paths,
+                    doc_id=doc_id,
+                    source_filename=filename_cache.get(
+                        doc_id, doc_id[:8] if doc_id else ""
+                    ),
                 )
             )
     return sources
 
 
+def _load_manifest_filenames(doc_ids: set[str], settings: Settings) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for doc_id in doc_ids:
+        if not doc_id:
+            continue
+        manifest_path = settings.processed_documents_dir / doc_id / "manifest.json"
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            result[doc_id] = str(data.get("source_filename") or doc_id[:8])
+        except Exception:
+            result[doc_id] = doc_id[:8]
+    return result
+
+
 def _synthesis_client(settings: Settings) -> OpenAIJSONModelClient:
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env file or set it as an environment variable.")
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to your .env file or set it as an environment variable."
+        )
     return OpenAIJSONModelClient(
         model=settings.synthesis_model,
         api_key=settings.openai_api_key,

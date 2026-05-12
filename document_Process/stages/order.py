@@ -49,9 +49,13 @@ class OrderStage:
             columns = _detect_columns(page.items, width)
 
             if direction == "rtl":
-                sorted_items = sorted(page.items, key=lambda it: _rtl_key(it, self.line_bucket_px))
+                sorted_items = sorted(
+                    page.items, key=lambda it: _rtl_key(it, self.line_bucket_px)
+                )
             else:
-                sorted_items = sorted(page.items, key=lambda it: _ltr_key(it, self.line_bucket_px))
+                sorted_items = sorted(
+                    page.items, key=lambda it: _ltr_key(it, self.line_bucket_px)
+                )
 
             page_ids: list[str] = []
             for item in sorted_items:
@@ -118,5 +122,3 @@ def _column_index(item: OCRTextItem, columns: int, page_width: float) -> int:
         return 0
     midpoint = page_width / 2.0
     return 0 if item.bbox.x0 < midpoint else 1
-
-

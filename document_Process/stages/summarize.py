@@ -40,7 +40,9 @@ class SummarizeStage:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def run(self, load_result: LoadResult, hier_result: HierarchyResult) -> SummarizeResult:
+    def run(
+        self, load_result: LoadResult, hier_result: HierarchyResult
+    ) -> SummarizeResult:
         logger.info("Stage 5 — Summarize: %s block(s)", len(hier_result.ordered_blocks))
         target_chars = self.settings.preprocess_chunk_size
         overlap_chars = self.settings.preprocess_chunk_overlap
@@ -54,15 +56,23 @@ class SummarizeStage:
         )
 
         skip_llm = (
-            self.settings.fast_mode or not self.settings.use_document_intelligence or not self.settings.openai_api_key
+            self.settings.fast_mode
+            or not self.settings.use_document_intelligence
+            or not self.settings.openai_api_key
         )
         if skip_llm:
             return SummarizeResult(chunks=chunks, document_summary="")
 
-        document_summary = asyncio.run(self._summarize_document(hier_result.document.sections, load_result))
+        document_summary = asyncio.run(
+            self._summarize_document(hier_result.document.sections, load_result)
+        )
 
         # Propagate section summaries back into chunk metadata so rag/chunk.py can read them.
-        summary_by_title = {sec.title: sec.summary for sec in hier_result.document.sections if sec.summary}
+        summary_by_title = {
+            sec.title: sec.summary
+            for sec in hier_result.document.sections
+            if sec.summary
+        }
         for chunk in chunks:
             title = chunk.metadata.get("parent_title", "")
             if title and title in summary_by_title:
@@ -70,13 +80,20 @@ class SummarizeStage:
 
         return SummarizeResult(chunks=chunks, document_summary=document_summary)
 
-    async def _summarize_document(self, sections: list[Section], load_result: LoadResult) -> str:
+    async def _summarize_document(
+        self, sections: list[Section], load_result: LoadResult
+    ) -> str:
         semaphore = asyncio.Semaphore(self.settings.llm_concurrency_limit)
         tasks = [self._summarize_section(sec, semaphore) for sec in sections]
         await asyncio.gather(*tasks)
 
         # Document-level summary from aggregated section summaries
-        structure_lines = [f"[{sec.title}] {sec.summary[:100]}" for sec in sections if sec.summary]
+        if not self.settings.use_document_summary:
+            return ""
+
+        structure_lines = [
+            f"[{sec.title}] {sec.summary[:100]}" for sec in sections if sec.summary
+        ]
         if not structure_lines:
             return ""
 
@@ -91,13 +108,19 @@ class SummarizeStage:
             logger.warning("Document summary generation failed: %s", exc)
             return ""
 
-    async def _summarize_section(self, section: Section, semaphore: asyncio.Semaphore) -> None:
+    async def _summarize_section(
+        self, section: Section, semaphore: asyncio.Semaphore
+    ) -> None:
         async with semaphore:
             try:
-                summary = await asyncio.get_event_loop().run_in_executor(None, self._call_section_summary_sync, section)
+                summary = await asyncio.get_event_loop().run_in_executor(
+                    None, self._call_section_summary_sync, section
+                )
                 section.summary = summary
             except Exception as exc:
-                logger.warning("Section summarization failed for %s: %s", section.title, exc)
+                logger.warning(
+                    "Section summarization failed for %s: %s", section.title, exc
+                )
 
     def _call_section_summary_sync(self, section: Section) -> str:
         from openai import OpenAI
@@ -132,7 +155,9 @@ class SummarizeStage:
         result = _safe_parse_json(raw)
         return str(result.get("summary") or "")
 
-    def _call_document_summary_sync(self, structure_lines: list[str], section_count: int) -> str:
+    def _call_document_summary_sync(
+        self, structure_lines: list[str], section_count: int
+    ) -> str:
         from openai import OpenAI
 
         client = OpenAI(
@@ -161,7 +186,21 @@ class SummarizeStage:
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-def _overlap_blocks(blocks: list[OrderedTextBlock], overlap_chars: int) -> list[OrderedTextBlock]:
+def _block_section_title(
+    block: OrderedTextBlock, region_by_id: dict[str, LayoutRegion]
+) -> str | None:
+    for rid in block.region_ids:
+        region = region_by_id.get(rid)
+        if region:
+            pt = region.metadata.get("parent_title")
+            if pt is not None:
+                return str(pt)
+    return None
+
+
+def _overlap_blocks(
+    blocks: list[OrderedTextBlock], overlap_chars: int
+) -> list[OrderedTextBlock]:
     if overlap_chars <= 0:
         return []
     kept: list[OrderedTextBlock] = []
@@ -220,14 +259,56 @@ def build_chunks(
 
     for page_number, blocks in sorted(blocks_by_page.items()):
         current: list[OrderedTextBlock] = []
+        current_section: str | None = None
         for block in blocks:
-            if current and len("\n\n".join(b.text for b in current + [block])) > target_chars:
-                chunks.append(_make_chunk(document_id, source_file, page_number, next_index, current, region_by_id))
+            block_section = _block_section_title(block, region_by_id)
+
+            # Section boundary: flush with no overlap carry-forward across sections.
+            if current and block_section != current_section:
+                chunks.append(
+                    _make_chunk(
+                        document_id,
+                        source_file,
+                        page_number,
+                        next_index,
+                        current,
+                        region_by_id,
+                    )
+                )
+                next_index += 1
+                current = []
+            # Character budget: flush with overlap carry-forward within the same section.
+            elif (
+                current
+                and len("\n\n".join(b.text for b in current + [block])) > target_chars
+            ):
+                chunks.append(
+                    _make_chunk(
+                        document_id,
+                        source_file,
+                        page_number,
+                        next_index,
+                        current,
+                        region_by_id,
+                    )
+                )
                 next_index += 1
                 current = _overlap_blocks(current, overlap_chars)
+
+            if not current:
+                current_section = block_section
             current.append(block)
         if current:
-            chunks.append(_make_chunk(document_id, source_file, page_number, next_index, current, region_by_id))
+            chunks.append(
+                _make_chunk(
+                    document_id,
+                    source_file,
+                    page_number,
+                    next_index,
+                    current,
+                    region_by_id,
+                )
+            )
             next_index += 1
 
     return chunks
@@ -245,43 +326,45 @@ def _make_chunk(
     text = "\n\n".join(b.text for b in blocks if b.text.strip()).strip()
     region_ids = sorted({rid for b in blocks for rid in b.region_ids})
     crop_refs = [
-        region_by_id[rid].crop_path for rid in region_ids if rid in region_by_id and region_by_id[rid].crop_path
+        region_by_id[rid].crop_path
+        for rid in region_ids
+        if rid in region_by_id and region_by_id[rid].crop_path
     ]
-    region_types = sorted({region_by_id[rid].region_type for rid in region_ids if rid in region_by_id})
+    region_types = sorted(
+        {region_by_id[rid].region_type for rid in region_ids if rid in region_by_id}
+    )
     bbox_refs = [b.bbox.as_list() for b in blocks if b.bbox is not None]
     item_ids = [iid for b in blocks for iid in b.item_ids]
     ordered_block_ids = [b.block_id for b in blocks]
 
     parent_title: str | None = None
     parent_subtitle: str | None = None
+    linked_region_id: str | None = None
     for rid in region_ids:
         region = region_by_id.get(rid)
         if region:
-            pt = region.metadata.get("parent_title")
-            if pt is not None:
-                parent_title = str(pt)
-                ps = region.metadata.get("parent_subtitle")
-                parent_subtitle = str(ps) if ps else None
-                break
+            if parent_title is None:
+                pt = region.metadata.get("parent_title")
+                if pt is not None:
+                    parent_title = str(pt)
+                    ps = region.metadata.get("parent_subtitle")
+                    parent_subtitle = str(ps) if ps else None
+            if linked_region_id is None and region.metadata.get("linked_region_id"):
+                linked_region_id = str(region.metadata["linked_region_id"])
 
     metadata: dict[str, Any] = {
         "document_id": document_id,
         "source_filename": source_filename,
         "page_number": page_number,
-        "chunk_id": chunk_id,
-        "ordered_block_ids": ordered_block_ids,
-        "item_ids": item_ids,
-        "region_ids": region_ids,
-        "region_types": region_types,
-        "bbox_references": bbox_refs,
         "crop_references": [r for r in crop_refs if r],
         "parent_title": parent_title,
         "parent_subtitle": parent_subtitle,
+        "linked_region_id": linked_region_id,
     }
 
     return ProcessedChunk(
         chunk_id=chunk_id,
-        text=text,
+        text="",
         page_content=text,
         page_number=page_number,
         ordered_block_ids=ordered_block_ids,
@@ -319,7 +402,11 @@ def build_visual_summaries(
         if region.region_type not in {"table", "figure"}:
             continue
         page_blocks = blocks_by_page.get(region.page_number, [])
-        overlapping = [b for b in page_blocks if b.bbox is not None and b.bbox.intersection_area(region.bbox) > 0]
+        overlapping = [
+            b
+            for b in page_blocks
+            if b.bbox is not None and b.bbox.intersection_area(region.bbox) > 0
+        ]
         if not overlapping:
             overlapping = sorted(
                 [b for b in page_blocks if b.bbox is not None],
@@ -332,7 +419,9 @@ def build_visual_summaries(
         block_text = " ".join(b.text for b in overlapping if b.text.strip()).strip()
         chunk_text = " ".join(c.text for c in region_chunks if c.text.strip()).strip()
         summary_text = (
-            block_text or chunk_text or f"Detected {region.region_type} region on page {region.page_number}."
+            block_text
+            or chunk_text
+            or f"Detected {region.region_type} region on page {region.page_number}."
         )[:1200]
         asset = asset_by_region.get(region.region_id)
         summaries.append(

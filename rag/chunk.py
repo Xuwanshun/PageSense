@@ -30,7 +30,11 @@ def _build_blocks(text: str, region_types: list[str]) -> list[dict[str, Any]]:
     block_type = _classify_block_type(region_types)
     has_adjacent_figure = any(rt in _FIGURE_TYPES for rt in region_types)
     return [
-        {"type": block_type, "content": seg.strip(), "has_adjacent_figure": has_adjacent_figure}
+        {
+            "type": block_type,
+            "content": seg.strip(),
+            "has_adjacent_figure": has_adjacent_figure,
+        }
         for seg in text.split("\n\n")
         if seg.strip()
     ]
@@ -71,6 +75,15 @@ class BlockRecord:
 
     block_id: str
     text: str  # embed text: "[section_title] > content | figure_desc"
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class DocumentRecord:
+    """Pool 0 — one record per document, embedded from document_summary."""
+
+    doc_id: str
+    text: str  # embed text: "{source_filename}: {document_summary}"
     metadata: dict[str, Any]
 
 
@@ -150,6 +163,56 @@ def section_records_from_processed_chunks(
     return records
 
 
+# ── Document record builder (Pool 0) ──────────────────────────────────────────
+
+
+def document_record_from_summary(
+    doc_id: str,
+    source_filename: str,
+    document_summary: str,
+    *,
+    chunks: list[ProcessedChunk] | None = None,
+    page_count: int = 0,
+    section_count: int = 0,
+) -> DocumentRecord:
+    """Build one Pool 0 DocumentRecord for a processed document.
+
+    Embed text: "{source_filename}: {document_summary}"
+    Falls back to aggregating first sentences of section summaries when
+    document_summary is empty (e.g. FAST_MODE artifacts).
+    Minimum embed text is always source_filename alone.
+    """
+    summary = (document_summary or "").strip()
+    if not summary and chunks:
+        # Aggregate first sentence of each unique section summary
+        seen: set[str] = set()
+        parts: list[str] = []
+        for chunk in chunks:
+            sec_sum = (chunk.metadata.get("section_summary") or "").strip()
+            if sec_sum and sec_sum not in seen:
+                seen.add(sec_sum)
+                first_sentence = sec_sum.split(".")[0].strip()
+                if first_sentence:
+                    parts.append(first_sentence)
+        summary = ". ".join(parts[:5])
+
+    if summary:
+        embed_text = f"{source_filename}: {summary}"
+    else:
+        embed_text = source_filename
+
+    return DocumentRecord(
+        doc_id=doc_id,
+        text=embed_text,
+        metadata={
+            "doc_id": doc_id,
+            "source_filename": source_filename,
+            "page_count": page_count,
+            "section_count": section_count,
+        },
+    )
+
+
 # ── Block record builder ───────────────────────────────────────────────────────
 
 
@@ -173,16 +236,21 @@ def block_records_from_processed_chunks(
 
         doc_id = document_id or chunk.metadata.get("document_id") or ""
         section_title = chunk.metadata.get("parent_title") or "untitled"
-        section_summary = chunk.metadata.get("section_summary") or ""
         page = chunk.page_number or 0
         region_types = chunk.region_types or []
-        blocks_list: list[dict[str, Any]] = chunk.metadata.get("blocks") or _build_blocks(text, region_types)
+        blocks_list: list[dict[str, Any]] = chunk.metadata.get(
+            "blocks"
+        ) or _build_blocks(text, region_types)
         sid = _section_id(doc_id, section_title)
         chunk_block_idx = chunk.metadata.get("block_index") or 0
 
         # Find the first figure description in this chunk for adjacent-context enrichment
         figure_desc = next(
-            (b["content"] for b in blocks_list if b.get("type") == "figure_description"),
+            (
+                b["content"]
+                for b in blocks_list
+                if b.get("type") == "figure_description"
+            ),
             None,
         )
 
@@ -197,7 +265,9 @@ def block_records_from_processed_chunks(
                 continue
 
             # Enrich embed text with adjacent figure description for non-figure blocks
-            adj_desc = figure_desc if has_adj and block_type != "figure_description" else None
+            adj_desc = (
+                figure_desc if has_adj and block_type != "figure_description" else None
+            )
             embed_text = f"[{section_title}] > {content}"
             if adj_desc:
                 embed_text += f" | {adj_desc}"
@@ -209,6 +279,11 @@ def block_records_from_processed_chunks(
                 block_crop_refs = crop_references
                 embed_text += f" [has visual crop: {crop_references[0]}]"
 
+            linked_figure_id = (
+                chunk.metadata.get("linked_region_id", "") or ""
+                if block_type == "caption"
+                else ""
+            )
             records.append(
                 BlockRecord(
                     block_id=_block_id(chunk.chunk_id, local_idx),
@@ -218,7 +293,6 @@ def block_records_from_processed_chunks(
                         "document_id": doc_id,
                         "section_id": sid,
                         "section_title": section_title,
-                        "section_summary": section_summary,
                         "block_index": chunk_block_idx * 100 + local_idx,
                         "page": page,
                         "page_number": page,
@@ -229,6 +303,7 @@ def block_records_from_processed_chunks(
                         "source_filename": source_filename,
                         "source_region_ids": [],  # kept for qa.py compat
                         "crop_references": block_crop_refs,
+                        "linked_figure_id": linked_figure_id,
                     },
                 )
             )

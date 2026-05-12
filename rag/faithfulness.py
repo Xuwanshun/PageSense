@@ -106,7 +106,9 @@ class FaithfulnessResult:
     claims: list[ClaimVerdict]
     overall_verdict: str  # FAITHFUL | PARTIALLY_FAITHFUL | UNFAITHFUL
     confidence_score: float
-    recommended_action: str  # return_as_is | flag_for_review | regenerate_without_unsupported_claims
+    recommended_action: (
+        str  # return_as_is | flag_for_review | regenerate_without_unsupported_claims
+    )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -117,8 +119,16 @@ def _format_source_passages(chunks: list[RetrievedChunk]) -> str:
     for chunk in chunks:
         parent_title = chunk.metadata.get("parent_title") or ""
         region_types = chunk.metadata.get("region_types") or []
-        region_label = "TABLE" if "table" in region_types else "FIGURE" if "figure" in region_types else "PROSE"
-        lines.append(f"[CHUNK {chunk.chunk_id} | {region_label} | {parent_title}]\n{chunk.text}")
+        region_label = (
+            "TABLE"
+            if "table" in region_types
+            else "FIGURE"
+            if "figure" in region_types
+            else "PROSE"
+        )
+        lines.append(
+            f"[CHUNK {chunk.chunk_id} | {region_label} | {parent_title}]\n{chunk.text}"
+        )
     return "\n\n".join(lines)
 
 
@@ -126,7 +136,9 @@ def _format_problem_claims(claims: list[ClaimVerdict]) -> str:
     lines: list[str] = []
     for claim in claims:
         if claim.status in ("UNSUPPORTED", "INFERRED"):
-            lines.append(f'Claim: "{claim.claim_text}"\nStatus: {claim.status}\nNote: {claim.note or "N/A"}')
+            lines.append(
+                f'Claim: "{claim.claim_text}"\nStatus: {claim.status}\nNote: {claim.note or "N/A"}'
+            )
     return "\n\n".join(lines)
 
 
@@ -208,7 +220,9 @@ class FaithfulnessChecker:
             )
             return _parse_check_response(raw)
         except Exception as exc:
-            logger.warning("Faithfulness check failed, treating answer as faithful: %s", exc)
+            logger.warning(
+                "Faithfulness check failed, treating answer as faithful: %s", exc
+            )
             return FaithfulnessResult(
                 claims=[],
                 overall_verdict="FAITHFUL",
@@ -229,7 +243,9 @@ class FaithfulnessChecker:
 
         Returns the original answer on LLM failure.
         """
-        problem_claims = [c for c in result.claims if c.status in ("UNSUPPORTED", "INFERRED")]
+        problem_claims = [
+            c for c in result.claims if c.status in ("UNSUPPORTED", "INFERRED")
+        ]
         if not problem_claims:
             return original_answer
 
@@ -253,5 +269,7 @@ class FaithfulnessChecker:
                 user_prompt=user_prompt,
             ).strip()
         except Exception as exc:
-            logger.warning("Faithfulness correction failed, returning original answer: %s", exc)
+            logger.warning(
+                "Faithfulness correction failed, returning original answer: %s", exc
+            )
             return original_answer

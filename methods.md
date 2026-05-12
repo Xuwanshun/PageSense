@@ -42,15 +42,16 @@ The system has three top-level stages, each independently runnable via the CLI:
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │              STAGE 2 · rag/index.py                                 │
-│   Reads chunks.json → builds Pool A (sections) + Pool B (blocks)   │
-│   Output: data/embedded/sections.json + blocks.json                │
+│   Reads chunks.json → builds Pool 0 (documents) + Pool A (sections)│
+│   + Pool B (blocks)                                                 │
+│   Output: data/embedded/documents.json + sections.json + blocks.json│
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │  python main.py --ask "question"
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │              STAGE 3 · rag/qa.py                                    │
-│   Metric detect → Section pre-filter → Block retrieval + boost     │
-│   → Synthesis → Optional faithfulness gate                         │
+│   Metric detect → Doc pre-filter (Pool 0) → Section pre-filter    │
+│   → Block retrieval + boost → Synthesis → Faithfulness gate        │
 │   Output: QAResponse (answer + sources + faithfulness label)       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -80,7 +81,9 @@ PDF file
 │  LoadStage  (stages/load.py)                             │
 │  • document_id = SHA-256(file bytes)                    │
 │  • Renders each page → PNG  (pypdfium2, scale 3.0×)    │
-│  • PaddleOCR → text items + bboxes per page            │
+│  • Text extraction: tries pdfplumber first (direct PDF  │
+│    text layer); falls back to PaddleOCR only when the   │
+│    page has ≤50 non-whitespace chars from pdfplumber    │
 │  • PP-DocLayout_plus-L → layout regions (text/table/   │
 │    figure) with deduplication                           │
 │  • Crops table/figure regions to image files           │
@@ -113,9 +116,16 @@ PDF file
 │  HierarchyStage  (stages/hierarchy.py)                   │
 │  • _build_blocks() — matches OCR items to layout        │
 │    regions via bbox overlap; sets item.region_id        │
+│  • _promote_title_candidates() — promotes text_block   │
+│    regions that look like headings in two-column PDFs  │
 │  • _assign_titles() — propagates parent_title /        │
 │    parent_subtitle from title regions to all            │
 │    subsequent non-title regions (reading order)        │
+│  • _recover_titles() — second pass after _assign_titles │
+│    recovers numbered headers (e.g. "1 Introduction")   │
+│    still in "untitled" zone: must match \d+(\.\d+)*\s+ │
+│    pattern, ≤60 chars, bbox width > 40% of page width; │
+│    logs "[Hierarchy] recovered title: …" at DEBUG      │
 │  • _build_hierarchy() — groups blocks into             │
 │    Document → Section → Block tree; inserts            │
 │    VisualRegion blocks at correct reading position     │
@@ -127,7 +137,9 @@ PDF file
 │  SummarizeStage  (stages/summarize.py)                   │
 │  • Splits OrderedTextBlocks into ProcessedChunks       │
 │    (target ~1800 chars, 200-char overlap carry-forward)│
-│  • Page boundaries force chunk splits                  │
+│  • Page boundaries AND section boundaries (parent_title│
+│    change) force chunk splits; no overlap carry-forward│
+│    across section boundaries                           │
 │  • USE_DOCUMENT_INTELLIGENCE=true + API key: async LLM │
 │    section summaries (synthesis_model); propagated     │
 │    back into chunk.metadata["section_summary"]         │
@@ -167,13 +179,15 @@ data/processed/
 | Field | Type | Description |
 |-------|------|-------------|
 | `chunk_id` | str | `"{doc_id}:chunk:{n}"` |
-| `text` / `page_content` | str | Chunk text (`page_content` preferred) |
+| `page_content` | str | Chunk text (the `text` field is no longer populated — always `""`) |
 | `page_number` | int | Primary page |
 | `region_types` | list[str] | `"text_block"` / `"table"` / `"figure"` / etc. |
 | `crop_references` | list[str] | Paths to cropped figure/table PNG files |
 | `metadata.parent_title` | str | Section heading from HierarchyStage |
 | `metadata.parent_subtitle` | str | Subtitle heading (if present) |
 | `metadata.section_summary` | str | LLM summary of section (if USE_DOCUMENT_INTELLIGENCE=true) |
+
+`manifest.json` now also carries `document_summary` and `source_filename` so that indexing (`rag/index.py`) can read them without loading the heavier `document.json`.
 
 ---
 
@@ -187,11 +201,21 @@ data/processed/  (all preprocessed documents)
   ├── _load_document_chunks()
   │   → ProcessedDocument + list[ProcessedChunk]
   │
+  ├── _index_pool0()                             [Pool 0]
+  │   → one DocumentRecord per document
+  │   embed text: "{source_filename}: {document_summary}"
+  │               (falls back to aggregated section summary sentences
+  │               if document_summary is empty; minimum is filename)
+  │   reads document_summary from manifest.json first; falls back to
+  │   document.json for backward compatibility with old artifacts
+  │   → upsert to documents.json  metadata: doc_id, source_filename,
+  │     page_count, section_count
+  │
   ├── section_records_from_processed_chunks()   [Pool A]
   │   → one SectionRecord per unique section
   │   embed text: "{section_title} — {subtitle}: {section_summary}"
   │               (subtitle/summary omitted when empty)
-  │   → upsert to sections.json  metadata: pool="section"
+  │   → upsert to sections.json  metadata: pool="section", doc_id
   │
   └── block_records_from_processed_chunks()     [Pool B]
       → one BlockRecord per paragraph/table/figure block
@@ -199,7 +223,8 @@ data/processed/  (all preprocessed documents)
                   (+ " | {figure_desc}" if has_adjacent_figure)
                   (+ " [has visual crop: {path}]" for table/figure
                      blocks with crop_references)
-      → upsert to blocks.json  metadata: pool="block", crop_references
+      → upsert to blocks.json  metadata: pool="block", doc_id,
+        crop_references  (section_summary NOT stored here — already in Pool A)
 ```
 
 **Block type classification** (from `region_types`):
@@ -238,13 +263,34 @@ embed question  (text-embedding-3-small)
 │  Else effective threshold = SECTION_FILTER_THRESHOLD (0.55)        │
 └─────────────────────────────────────────────────────────────────────┘
   │
+  ▼  Step 1.5
+┌─────────────────────────────────────────────────────────────────────┐
+│  Document Pre-Filter  (Pool 0 search — USE_DOCUMENT_PREFILTER=true)│
+│  • cosine search Pool 0 (documents.json), top DOCUMENT_FILTER_TOP_K│
+│    × 2 candidates                                                   │
+│  • keep docs with score ≥ DOCUMENT_FILTER_THRESHOLD (0.45)         │
+│  • cap at DOCUMENT_FILTER_TOP_K (3) passing docs                   │
+│  • if none pass → candidate_doc_ids = {} (global fallback, same    │
+│    as USE_DOCUMENT_PREFILTER=false)                                 │
+│  • logs: "[QA] document pre-filter: N doc(s) pass threshold 0.45   │
+│    — ['filename.pdf', ...]"                                         │
+│                                                                     │
+│  Output: candidate_doc_ids: set[str]  (empty = no filter)          │
+└─────────────────────────────────────────────────────────────────────┘
+  │
   ▼  Step 2
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Section Pre-Filter  (Pool A search)                                │
-│  • cosine search Pool A, top 3 × 2 candidates                      │
+│  Section Pre-Filter  (Pool A search, scoped to candidate_doc_ids)   │
+│  • cosine search Pool A, filtered to candidate_doc_ids              │
 │  • keep sections with score ≥ effective threshold                   │
 │  • cap at 3 candidate sections                                      │
 │  • if none pass → candidate_sections = {} (global fallback)         │
+│                                                                     │
+│  Multi-doc diversity injection (Fix I):                             │
+│  If Pool 0 passed >1 doc, check that Pool A selected sections from  │
+│  each candidate doc. For any missing doc, inject its highest-scoring│
+│  Pool A section regardless of threshold, ensuring all Pool-0-passing│
+│  documents are represented in retrieval.                            │
 │                                                                     │
 │  Output: candidate_section_ids: set[str]                            │
 └─────────────────────────────────────────────────────────────────────┘
@@ -328,6 +374,8 @@ QAResponse
 
 Before running the Pool A section pre-filter, the query is scanned for numeric/metric intent terms. If ≥2 terms match, the section filter threshold is dynamically lowered to `METRIC_QUERY_THRESHOLD` (0.35) for this query only.
 
+A secondary check also triggers metric mode when the query contains any decimal number (`\d+\.\d+`, e.g. "93.8") or percentage (`\d+%`), regardless of how many METRIC_TERMS appear.
+
 **Why:** In two-column academic PDFs, section headers like "6 Results" are often misclassified as `text_block` by the layout model. Those blocks get absorbed into the preceding section (e.g. "5.4 Regularization"), whose Pool A embedding has nothing to do with results. The Pool A score for that section against a BLEU/metric query is ~0.16 — well below any reasonable threshold. Lowering the threshold admits more candidate sections, and the global Pool B supplement injects the actual results blocks directly from cosine search (where the block text does mention BLEU scores and scores ~0.61).
 
 ---
@@ -338,7 +386,8 @@ Embeds the raw user question and searches Pool A (section summaries). This is a 
 
 - **Normal threshold:** `SECTION_FILTER_THRESHOLD=0.55`
 - **Metric threshold:** `METRIC_QUERY_THRESHOLD=0.35` (activated by Step 1)
-- **Cap:** maximum 3 candidate sections
+- **Cap:** all sections within 0.12 cosine similarity of the top-scoring section, with a hard maximum of `SECTION_FILTER_MAX` (default 8). Minimum 1 when at least one section clears the threshold.
+- **Name-match injection:** after the cosine filter, any section whose title contains a word of ≥5 characters that also appears in the query is injected into the candidate set regardless of cosine score, up to `SECTION_FILTER_MAX`. This recovers sections like "1 Introduction" when the query says "introduction" but the section's cosine score is below threshold due to sparse section content.
 - **Fallback:** if no section clears the threshold, skip scoping and search all blocks globally
 
 ---
@@ -356,7 +405,7 @@ Searches Pool B (individual blocks) scoped to the candidate sections. Applies sc
 
 For metric queries, up to 2 globally-scored blocks outside the candidate sections are appended before boosting, ensuring misattributed results blocks can still be retrieved.
 
-After boosting, for each of the top-k anchor blocks, neighbors at `block_index ±2` within the same section are fetched and grouped into a `BlockWindow`. Results are deduplicated by block_id and sorted by reading order.
+After boosting, for each of the top-k anchor blocks, neighbors at `block_index ±2` within the same section are fetched and grouped into a `BlockWindow`. Neighbor expansion is section-boundary-capped: only blocks with the same `section_id` as the anchor are included. Results are deduplicated by block_id and sorted by reading order.
 
 ---
 
@@ -372,6 +421,8 @@ The document describes three key phases of the process...
 [Note: this block has an associated figure/table image at data/processed/.../crops/region_42.png
  — enable USE_VLM_SUMMARIES=true to include visual descriptions]
 ```
+
+When `USE_VLM_SUMMARIES=true`, the synthesis LLM call is made as a multimodal (vision) request: the first crop image per block is resized so the long edge is at most `VISION_MAX_IMAGE_PX` (default 800 px) using `Image.LANCZOS`, saved as JPEG quality 85 to a `BytesIO` buffer, then base64-encoded. This keeps payloads small (~15–30 KB vs. ~291 KB for raw PNG crops). When at least one image content block is present, `VISION_SYNTHESIS_MODEL` (default `gpt-4o-mini`) is used instead of `SYNTHESIS_MODEL`, since `gpt-4o-mini` has full vision capability. When there are no vision blocks, `SYNTHESIS_MODEL` is used as usual.
 
 The system prompt instructs the model to answer only from the provided blocks and to cite `(Section: <title>, Page <n>)` for every claim.
 
@@ -398,12 +449,19 @@ All flags are read from environment variables or `.env` via pydantic-settings.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
+| `USE_DOCUMENT_PREFILTER` | `true` | Pool 0 document-level pre-filter before Pool A |
+| `DOCUMENT_FILTER_THRESHOLD` | `0.45` | Min cosine similarity for Pool 0 |
+| `DOCUMENT_FILTER_TOP_K` | `3` | Max documents to pass Pool 0 |
 | `SECTION_FILTER_THRESHOLD` | `0.55` | Min cosine similarity for Pool A pre-filter (normal queries) |
 | `METRIC_QUERY_THRESHOLD` | `0.35` | Lowered threshold when ≥2 metric terms detected in query |
 | `DEFAULT_TOP_K` | `4` | Block windows passed to synthesis |
-| `USE_FAITHFULNESS_CHECK` | `false` | Step 5 claim verification + correction |
+| `USE_FAITHFULNESS_CHECK` | `true` | Step 5 claim verification + correction |
+| `FAST_QUERY_MODE` | `false` | Skip faithfulness gate + reduce neighbor expansion (±1) |
+| `SECTION_FILTER_MAX` | `8` | Max candidate sections after score-gap filter |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding backend |
 | `SYNTHESIS_MODEL` | `gpt-4.1-nano` | Synthesis + faithfulness LLM |
+| `VISION_SYNTHESIS_MODEL` | `gpt-4o-mini` | LLM used for synthesis when crop images are present |
+| `VISION_MAX_IMAGE_PX` | `800` | Long-edge pixel cap before base64 encoding (LANCZOS JPEG q85) |
 | `PREFER_CHROMA` | `false` | ChromaDB instead of JSON store |
 
 **Preprocessing flags:**

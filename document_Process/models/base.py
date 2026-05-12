@@ -33,7 +33,12 @@ class BoundingBox(BaseModel):
 
     @classmethod
     def from_list(cls, values: list[float]) -> BoundingBox:
-        return cls(x0=float(values[0]), y0=float(values[1]), x1=float(values[2]), y1=float(values[3]))
+        return cls(
+            x0=float(values[0]),
+            y0=float(values[1]),
+            x1=float(values[2]),
+            y1=float(values[3]),
+        )
 
     @classmethod
     def merge(cls, boxes: list[BoundingBox]) -> BoundingBox | None:

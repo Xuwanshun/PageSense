@@ -37,7 +37,9 @@ class OpenAIJSONModelClient:
         self.model = model
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
-    def generate_structured(self, *, system_prompt: str, user_prompt: str, response_model: type[ModelT]) -> ModelT:
+    def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, response_model: type[ModelT]
+    ) -> ModelT:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -53,14 +55,20 @@ class OpenAIJSONModelClient:
                 "OpenAI rate limit reached. Wait a moment and retry, or reduce request frequency."
             ) from exc
         except APITimeoutError as exc:
-            raise RuntimeError("OpenAI API request timed out. Check your network connection.") from exc
+            raise RuntimeError(
+                "OpenAI API request timed out. Check your network connection."
+            ) from exc
         except APIConnectionError as exc:
             raise RuntimeError(f"Could not connect to OpenAI API: {exc}") from exc
         except APIStatusError as exc:
-            raise RuntimeError(f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}") from exc
+            raise RuntimeError(
+                f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}"
+            ) from exc
 
         content = str((response.choices[0].message.content or "").strip())
-        return _validate_response_model(response_model, _extract_json_from_text(content))
+        return _validate_response_model(
+            response_model, _extract_json_from_text(content)
+        )
 
     def generate_text(self, *, system_prompt: str, user_prompt: str) -> str:
         try:
@@ -77,18 +85,24 @@ class OpenAIJSONModelClient:
                 "OpenAI rate limit reached. Wait a moment and retry, or reduce request frequency."
             ) from exc
         except APITimeoutError as exc:
-            raise RuntimeError("OpenAI API request timed out. Check your network connection.") from exc
+            raise RuntimeError(
+                "OpenAI API request timed out. Check your network connection."
+            ) from exc
         except APIConnectionError as exc:
             raise RuntimeError(f"Could not connect to OpenAI API: {exc}") from exc
         except APIStatusError as exc:
-            raise RuntimeError(f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}") from exc
+            raise RuntimeError(
+                f"OpenAI API returned an error (HTTP {exc.status_code}): {exc.message}"
+            ) from exc
 
         return str(response.choices[0].message.content or "")
 
 
 def build_openai_client(settings: Settings) -> OpenAIJSONModelClient:
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env file or set it as an environment variable.")
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to your .env file or set it as an environment variable."
+        )
     return OpenAIJSONModelClient(
         model=settings.synthesis_model,
         api_key=settings.openai_api_key,
@@ -96,7 +110,9 @@ def build_openai_client(settings: Settings) -> OpenAIJSONModelClient:
     )
 
 
-def request_openai_embeddings(*, model: str, texts: list[str], api_key: str, base_url: str | None) -> list[list[float]]:
+def request_openai_embeddings(
+    *, model: str, texts: list[str], api_key: str, base_url: str | None
+) -> list[list[float]]:
     client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         response = client.embeddings.create(model=model, input=texts)
@@ -106,9 +122,13 @@ def request_openai_embeddings(*, model: str, texts: list[str], api_key: str, bas
             "Wait a moment and retry, or reduce the number of texts per batch."
         ) from exc
     except APITimeoutError as exc:
-        raise RuntimeError("OpenAI embedding request timed out. Check your network connection.") from exc
+        raise RuntimeError(
+            "OpenAI embedding request timed out. Check your network connection."
+        ) from exc
     except APIConnectionError as exc:
-        raise RuntimeError(f"Could not connect to OpenAI API for embeddings: {exc}") from exc
+        raise RuntimeError(
+            f"Could not connect to OpenAI API for embeddings: {exc}"
+        ) from exc
     except APIStatusError as exc:
         raise RuntimeError(
             f"OpenAI API returned an error (HTTP {exc.status_code}) during embedding: {exc.message}"
@@ -129,7 +149,9 @@ def _extract_json_from_text(content: str) -> dict[str, Any]:
         raise RuntimeError("OpenAI model did not return valid JSON.") from None
 
 
-def _validate_response_model(response_model: type[ModelT], payload: dict[str, Any]) -> ModelT:
+def _validate_response_model(
+    response_model: type[ModelT], payload: dict[str, Any]
+) -> ModelT:
     try:
         return response_model.model_validate(payload)
     except Exception:

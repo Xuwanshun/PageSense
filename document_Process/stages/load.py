@@ -86,7 +86,9 @@ class LoadStage:
     def run(self, source_path: Path, *, document_id: str | None = None) -> LoadResult:
         logger.info("Stage 1 — Load & Detect: %s", source_path)
         if source_path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            raise ValueError(f"Unsupported document type: {source_path.suffix or 'no extension'}")
+            raise ValueError(
+                f"Unsupported document type: {source_path.suffix or 'no extension'}"
+            )
 
         resolved_id = document_id or self._build_document_id(source_path)
         working_dir = self.settings.processed_documents_dir / resolved_id
@@ -102,12 +104,19 @@ class LoadStage:
             shutil.copy2(source_path, original_copy_path)
 
         if original_copy_path.suffix.lower() == ".pdf":
-            pages = _load_pdf_pages(original_copy_path, pages_dir, render_scale=self.settings.pdf_render_scale)
+            pages = _load_pdf_pages(
+                original_copy_path,
+                pages_dir,
+                render_scale=self.settings.pdf_render_scale,
+            )
         else:
             pages = [_load_image_page(original_copy_path, page_number=1)]
 
         issues: list[ProcessingIssue] = []
-        ocr_pages = self._run_ocr(pages, issues)
+        pdf_path = (
+            original_copy_path if original_copy_path.suffix.lower() == ".pdf" else None
+        )
+        ocr_pages = self._run_ocr(pages, issues, pdf_path=pdf_path)
         regions = self._run_layout(pages, issues)
         self._crop_visual_regions(pages, regions, working_dir / "crops", issues)
 
@@ -131,11 +140,70 @@ class LoadStage:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _run_ocr(self, pages: list[PageResult], issues: list[ProcessingIssue]) -> list[OCRPageResult]:
+    def _run_ocr(
+        self,
+        pages: list[PageResult],
+        issues: list[ProcessingIssue],
+        pdf_path: Path | None = None,
+    ) -> list[OCRPageResult]:
         logger.info("Running PaddleOCR on %s page(s)", len(pages))
         ocr = _get_paddle_ocr()
         results: list[OCRPageResult] = []
         for page in pages:
+            # Try direct text extraction from the PDF text layer before falling back to OCR.
+            # Machine-readable PDFs produce cleaner text; OCR introduces noise on them.
+            if pdf_path is not None:
+                try:
+                    import pdfplumber  # type: ignore
+
+                    scale = self.settings.pdf_render_scale
+                    with pdfplumber.open(pdf_path) as plumb_pdf:
+                        plumb_page = plumb_pdf.pages[page.page_number - 1]
+                        words = plumb_page.extract_words() or []
+                    nonws_chars = sum(len(w["text"].replace(" ", "")) for w in words)
+                    if nonws_chars > 50:
+                        pdf_items: list[OCRTextItem] = []
+                        for idx, word in enumerate(words, start=1):
+                            cleaned = str(word["text"]).strip()
+                            if not cleaned:
+                                continue
+                            bbox = BoundingBox(
+                                x0=float(word["x0"]) * scale,
+                                y0=float(word["top"]) * scale,
+                                x1=float(word["x1"]) * scale,
+                                y1=float(word["bottom"]) * scale,
+                            )
+                            if not bbox.is_valid():
+                                continue
+                            pdf_items.append(
+                                OCRTextItem(
+                                    item_id=f"p{page.page_number}_pdf_{idx}",
+                                    page_number=page.page_number,
+                                    text=cleaned,
+                                    bbox=bbox,
+                                    confidence=1.0,
+                                    source="pdfplumber",
+                                )
+                            )
+                        if pdf_items:
+                            results.append(
+                                OCRPageResult(
+                                    page_number=page.page_number,
+                                    width=page.width,
+                                    height=page.height,
+                                    items=pdf_items,
+                                    text_source="pdfplumber",
+                                    page_image_path=str(page.page_image_path),
+                                )
+                            )
+                            continue
+                except Exception as exc:
+                    logger.debug(
+                        "pdfplumber text extraction failed for page %d, falling back to PaddleOCR: %s",
+                        page.page_number,
+                        exc,
+                    )
+
             try:
                 payload = ocr.predict(str(page.page_image_path))[0].json["res"]
             except Exception as exc:
@@ -187,7 +255,9 @@ class LoadStage:
             )
         return results
 
-    def _run_layout(self, pages: list[PageResult], issues: list[ProcessingIssue]) -> list[LayoutRegion]:
+    def _run_layout(
+        self, pages: list[PageResult], issues: list[ProcessingIssue]
+    ) -> list[LayoutRegion]:
         logger.info("Running Paddle layout detection on %s page(s)", len(pages))
         detector = _get_paddle_layout_detector()
         regions: list[LayoutRegion] = []
@@ -215,7 +285,9 @@ class LoadStage:
                         region_type=region_type,
                         page_number=page.page_number,
                         bbox=bbox,
-                        confidence=float(box["score"]) if box.get("score") is not None else None,
+                        confidence=float(box["score"])
+                        if box.get("score") is not None
+                        else None,
                         source="paddle_layout_detection",
                         metadata={"detector": "PP-DocLayout_plus-L", "label": label},
                     )
@@ -320,7 +392,9 @@ class LoadStage:
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-def _load_pdf_pages(path: Path, pages_dir: Path, *, render_scale: float) -> list[PageResult]:
+def _load_pdf_pages(
+    path: Path, pages_dir: Path, *, render_scale: float
+) -> list[PageResult]:
     try:
         import pypdfium2 as pdfium  # type: ignore
     except Exception as exc:
@@ -358,10 +432,17 @@ def _load_image_page(path: Path, *, page_number: int) -> PageResult:
 
     with Image.open(path) as image:
         width, height = image.size
-    return PageResult(page_number=page_number, width=float(width), height=float(height), page_image_path=path)
+    return PageResult(
+        page_number=page_number,
+        width=float(width),
+        height=float(height),
+        page_image_path=path,
+    )
 
 
-def _bbox_from_ocr_payload(rec_boxes: list[Any], dt_polys: list[Any], index: int) -> BoundingBox | None:
+def _bbox_from_ocr_payload(
+    rec_boxes: list[Any], dt_polys: list[Any], index: int
+) -> BoundingBox | None:
     if index < len(rec_boxes):
         value = rec_boxes[index]
         if isinstance(value, list) and len(value) == 4:
@@ -395,14 +476,20 @@ def _dedupe_regions(regions: list[LayoutRegion]) -> list[LayoutRegion]:
     seen: set[tuple[int, str, tuple[float, ...]]] = set()
     deduped: list[LayoutRegion] = []
     for region in regions:
-        key = (region.page_number, region.region_type, tuple(round(v, 1) for v in region.bbox.as_list()))
+        key = (
+            region.page_number,
+            region.region_type,
+            tuple(round(v, 1) for v in region.bbox.as_list()),
+        )
         if key not in seen:
             seen.add(key)
             deduped.append(region)
     return deduped
 
 
-def _compute_crop_box(region: LayoutRegion, image_width: int, image_height: int) -> tuple[int, int, int, int] | None:
+def _compute_crop_box(
+    region: LayoutRegion, image_width: int, image_height: int
+) -> tuple[int, int, int, int] | None:
     width = region.bbox.x1 - region.bbox.x0
     height = region.bbox.y1 - region.bbox.y0
     if width <= 1 or height <= 1:
