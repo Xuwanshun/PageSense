@@ -85,7 +85,7 @@ def _flatten(normalizer, raw_iter: Iterator[dict]) -> Generator[dict, None, None
 
 def _hf_stream(repo: str, split: str, normalizer, config_name: Optional[str] = None) -> hf.IterableDataset:
     """Stream a HF dataset and wrap every sample through a normalizer."""
-    kwargs: dict = dict(split=split, streaming=True, trust_remote_code=True)
+    kwargs: dict = dict(split=split, streaming=True)
     if config_name:
         kwargs["name"] = config_name
     if _HF_TOKEN:
@@ -131,10 +131,10 @@ def load_scicap() -> hf.IterableDataset:
     split = HF_SPLITS["scicap"]
     log.info("Streaming %s split=%s (schema inconsistencies handled gracefully)", repo, split)
     try:
-        raw_ds = hf.load_dataset(repo, split=split, streaming=True, trust_remote_code=True)
+        raw_ds = hf.load_dataset(repo, split=split, streaming=True)
     except Exception as exc:
         log.warning("SciCap fallback (no split kwarg): %s", exc)
-        raw_ds = hf.load_dataset(repo, streaming=True, trust_remote_code=True)[split]
+        raw_ds = hf.load_dataset(repo, streaming=True)[split]
     return hf.IterableDataset.from_generator(
         _flatten, gen_kwargs={"normalizer": normalize_scicap, "raw_iter": raw_ds},
     )
@@ -142,7 +142,7 @@ def load_scicap() -> hf.IterableDataset:
 
 def load_docvqa() -> hf.IterableDataset:
     """lmms-lab/DocVQA — validation split (5 350 samples with answers)."""
-    return _hf_stream(HF_REPOS["docvqa"], HF_SPLITS["docvqa"], normalize_docvqa)
+    return _hf_stream(HF_REPOS["docvqa"], HF_SPLITS["docvqa"], normalize_docvqa, config_name="DocVQA")
 
 
 def load_docvqa_full() -> hf.IterableDataset:
@@ -205,7 +205,7 @@ def load_sharegpt4v(s3_cfg: S3Config) -> hf.IterableDataset:
     log.info("Streaming %s subset=%s", repo, subset)
     raw_ds = hf.load_dataset(
         repo, name=subset, split="train",
-        streaming=True, trust_remote_code=True, token=_HF_TOKEN,
+        streaming=True, token=_HF_TOKEN,
     )
     return hf.IterableDataset.from_generator(
         _flatten,
@@ -256,12 +256,34 @@ class S3ImageResolver:
 # Build mixed dataset
 # ---------------------------------------------------------------------------
 
+def _weighted_mix(streams: Dict, probs: list, seed: int = 42):
+    """Weighted random interleaving as a plain Python generator.
+
+    Avoids hf.interleave_datasets which tries to resolve PyArrow features and
+    cannot handle PIL.Image values in the sample dicts.
+    """
+    import random
+    rng = random.Random(seed)
+    active_keys = list(streams.keys())
+    active_probs = list(probs)
+    iters = {k: iter(v) for k, v in streams.items()}
+
+    while active_keys:
+        key = rng.choices(active_keys, weights=active_probs, k=1)[0]
+        try:
+            yield next(iters[key])
+        except StopIteration:
+            idx = active_keys.index(key)
+            active_keys.pop(idx)
+            active_probs.pop(idx)
+
+
 def build_dataset(
     s3_cfg: Optional[S3Config] = None,
     weights: Optional[Dict[str, float]] = None,
     seed: int = 42,
     skip_s3_datasets: bool = False,
-) -> hf.IterableDataset:
+):
     """Build a weighted mixed streaming SFT dataset from all 11 sources.
 
     Args:
@@ -272,23 +294,28 @@ def build_dataset(
         skip_s3_datasets: Skip S3-dependent sources (useful for local testing).
 
     Returns:
-        IterableDataset yielding {image, prompt, response, source, metadata}.
+        Generator yielding {image, prompt, response, source, metadata} dicts.
         image may be None for text-only samples (GovReport).
     """
     if weights is None:
         weights = SAMPLING_WEIGHTS
 
     # HF-hosted datasets (no S3 required)
-    streams: Dict[str, hf.IterableDataset] = {
-        "chartcap":    load_chartcap(),
-        "arxivcap":    load_arxivcap(),
-        "scicap":      load_scicap(),
-        "docvqa":      load_docvqa(),
-        "docvqa_full": load_docvqa_full(),
-        "doclaynet":   load_doclaynet(),
-        "dude":        load_dude(),
-        "govreport":   load_govreport(),
-    }
+    streams: Dict[str, hf.IterableDataset] = {}
+    for key, loader in [
+        ("chartcap",    load_chartcap),
+        ("arxivcap",    load_arxivcap),
+        ("scicap",      load_scicap),
+        ("docvqa",      load_docvqa),
+        ("docvqa_full", load_docvqa_full),
+        ("doclaynet",   load_doclaynet),
+        ("dude",        load_dude),
+        ("govreport",   load_govreport),
+    ]:
+        try:
+            streams[key] = loader()
+        except Exception as exc:
+            log.warning("%s skipped: %s", key, exc)
 
     # S3-hosted datasets (ChartSumm, VisText, ShareGPT4V)
     if not skip_s3_datasets and s3_cfg is not None:
@@ -313,12 +340,7 @@ def build_dataset(
     for k, p in zip(keys, probs):
         log.info("  %-16s  %.1f %%", k, p * 100)
 
-    return hf.interleave_datasets(
-        [streams[k] for k in keys],
-        probabilities=probs,
-        seed=seed,
-        stopping_strategy="all_exhausted",
-    )
+    return _weighted_mix(streams, probs, seed)
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,9 @@
-# Terraform secrets — never commit
-aws_ec2/terraform.tfvars
-aws_ec2/.terraform/
-aws_ec2/.terraform.lock.hcl
-aws_ec2/terraform.tfstate
-aws_ec2/terraform.tfstate.backup
-
-# SSH keys
+# Secrets — never commit
+.env
 *.pem
+
+# Claude Code project instructions
+CLAUDE.md
 
 # Python
 __pycache__/
@@ -17,7 +14,7 @@ venv/
 dist/
 build/
 
-# Training outputs
+# Training outputs & generated artifacts
 output/
 checkpoints/
 
@@ -28,6 +25,14 @@ dataset/
 
 # HuggingFace cache
 .cache/
+
+# Terraform — ignore state, secrets, and local working files only
+aws_ec2/.terraform/
+aws_ec2/terraform.tfstate
+aws_ec2/terraform.tfstate.backup
+aws_ec2/terraform.tfvars
+aws_ec2/tfplan
+aws_ec2/launch_when_ready.sh
 
 # macOS
 .DS_Store

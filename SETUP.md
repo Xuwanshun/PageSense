@@ -95,6 +95,7 @@ When you see `=== Setup complete ===` the instance is ready.
 aws s3 sync . s3://qwen3-vl-sft-training-604561274097/code/ \
   --region us-east-1 \
   --exclude ".git/*" \
+  --exclude ".env" \
   --exclude "dataset/*" \
   --exclude "output/*" \
   --exclude "*.pem" \

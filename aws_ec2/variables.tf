@@ -61,6 +61,12 @@ variable "allowed_ssh_cidr" {
   }
 }
 
+variable "subnet_id" {
+  description = "Subnet ID to launch the instance in. Pin to an AZ with spot capacity."
+  type        = string
+  default     = ""
+}
+
 variable "idle_cpu_threshold" {
   description = "Average CPU utilization (%) below which the instance is considered idle"
   type        = number

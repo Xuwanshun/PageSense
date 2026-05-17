@@ -161,6 +161,7 @@ resource "aws_spot_instance_request" "training" {
   key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_training.name
   vpc_security_group_ids = [aws_security_group.training.id]
+  subnet_id              = var.subnet_id != "" ? var.subnet_id : null
 
   user_data = local.user_data
 

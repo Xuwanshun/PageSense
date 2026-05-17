@@ -37,6 +37,7 @@ import io
 import json
 import logging
 import os
+import subprocess
 from typing import List, Optional
 
 import torch
@@ -48,10 +49,26 @@ from transformers import (
     HfArgumentParser,
     Qwen3VLForConditionalGeneration,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
 from parameter import ScriptArguments
+
+
+class S3CheckpointCallback(TrainerCallback):
+    """Sync checkpoints to S3 after every save (non-blocking)."""
+
+    def __init__(self, s3_bucket: str, s3_prefix: str = "checkpoints"):
+        self.s3_uri = f"s3://{s3_bucket}/{s3_prefix}/"
+
+    def on_save(self, args, state, control, **kwargs):
+        subprocess.Popen(
+            ["aws", "s3", "sync", args.output_dir, self.s3_uri, "--region", "us-east-1"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return control
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +120,13 @@ class VLMDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         item = self.data[idx]
+
+        # Skip samples whose image file is missing or empty (returns next valid sample)
+        image_path = item.get("image")
+        if image_path and (not os.path.exists(image_path) or os.path.getsize(image_path) == 0):
+            log.warning("Skipping corrupt/missing image: %s", image_path)
+            return self.__getitem__((idx + 1) % len(self.data))
+
         messages = self._build_messages(item)
 
         # Encode full conversation (prompt + response)
@@ -160,7 +184,8 @@ class VLMDataCollator:
     def __call__(self, features: List[dict]) -> dict:
         max_len = max(f["input_ids"].shape[-1] for f in features)
 
-        input_ids, attention_masks, labels = [], [], []
+        input_ids, attention_masks, labels, mm_token_type_ids = [], [], [], []
+        has_mm_token_type_ids = "mm_token_type_ids" in features[0]
         for f in features:
             pad_len = max_len - f["input_ids"].shape[-1]
             input_ids.append(
@@ -172,12 +197,18 @@ class VLMDataCollator:
             labels.append(
                 torch.cat([f["labels"], torch.full((pad_len,), IGNORE_INDEX)])
             )
+            if has_mm_token_type_ids:
+                mm_token_type_ids.append(
+                    torch.cat([f["mm_token_type_ids"], torch.zeros(pad_len, dtype=torch.long)])
+                )
 
         batch = {
             "input_ids": torch.stack(input_ids),
             "attention_mask": torch.stack(attention_masks),
             "labels": torch.stack(labels),
         }
+        if has_mm_token_type_ids:
+            batch["mm_token_type_ids"] = torch.stack(mm_token_type_ids)
 
         if "pixel_values" in features[0]:
             # pixel_values shape: (total_patches, C, patch_h, patch_w) — concat across batch
@@ -185,7 +216,7 @@ class VLMDataCollator:
                 [f["pixel_values"] for f in features], dim=0
             )
             batch["image_grid_thw"] = torch.cat(
-                [f["image_grid_thw"] for f in features], dim=0
+                [f["image_grid_thw"].view(-1, 3) for f in features], dim=0
             )
 
         return batch
@@ -307,6 +338,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=VLMDataCollator(processor),
+        callbacks=[S3CheckpointCallback("qwen3-vl-sft-training-604561274097")],
     )
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_model(training_args.output_dir)
