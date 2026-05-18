@@ -100,14 +100,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
+      # ── Docker Build + Push ────────────────────────────────────────────────
+      # Buildx must be set up before ECR login so the credential store is
+      # ready — otherwise buildx cache operations get 401 from ECR.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       # ── ECR Login ─────────────────────────────────────────────────────────
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
-      # ── Docker Build + Push ────────────────────────────────────────────────
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        with:
+          mask-password: "false"
 
       - name: Build and push Docker image to ECR
         id: build-push
