@@ -159,7 +159,7 @@ def _describe_crop(
                 crop_path=crop_path,
                 region_type=region_type,
                 context_text=context_text,
-                api_key=settings.vlm_hf_token or "hf",
+                api_key="modal",
                 base_url=settings.vlm_base_url,
                 model=settings.vlm_self_hosted_model,
             )

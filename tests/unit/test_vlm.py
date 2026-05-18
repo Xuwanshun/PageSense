@@ -22,6 +22,7 @@ def _settings(**overrides) -> Settings:
         openai_api_key="sk-test-fake",
         use_vlm_summaries=True,
         vlm_model="gpt-4o",
+        vlm_base_url=None,
         s3_bucket_name=None,
     )
     base.update(overrides)
@@ -383,7 +384,6 @@ class TestSelfHostedVlm:
         crop.write_bytes(b"PNG")
         settings = _settings(
             vlm_base_url="https://test.huggingface.cloud/v1",
-            vlm_hf_token="hf_test",
             vlm_self_hosted_model="tgi",
         )
 
@@ -402,7 +402,6 @@ class TestSelfHostedVlm:
         crop.write_bytes(b"PNG")
         settings = _settings(
             vlm_base_url="https://test.huggingface.cloud/v1",
-            vlm_hf_token="hf_test",
         )
 
         def fake_call_vlm(**kwargs):
@@ -421,7 +420,6 @@ class TestSelfHostedVlm:
         crop.write_bytes(b"PNG")
         settings = _settings(
             vlm_base_url="https://test.huggingface.cloud/v1",
-            vlm_hf_token="hf_test",
         )
 
         call_count = 0
@@ -456,7 +454,6 @@ class TestSelfHostedVlm:
         crop.write_bytes(b"PNG")
         settings = _settings(
             vlm_base_url="https://test.huggingface.cloud/v1",
-            vlm_hf_token="hf_test",
             vlm_self_hosted_model="tgi",
             vlm_model="gpt-4o",
         )
