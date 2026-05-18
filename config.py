@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     # When set, the pipeline calls the Modal endpoint first and falls back to
     # vlm_model (gpt-4o) on any connection error or timeout.
     # Leave unset to use gpt-4o exclusively (existing behaviour).
-    vlm_base_url: str | None = None        # e.g. https://lzhuang971--qwen3-vl-rag-model-fastapi-app.modal.run/v1
+    vlm_base_url: str | None = None  # e.g. https://lzhuang971--qwen3-vl-rag-model-fastapi-app.modal.run/v1
     vlm_self_hosted_model: str = "qwen3-vl-rag"  # model name Modal endpoint exposes
 
     # ── Document intelligence ─────────────────────────────────────────────────

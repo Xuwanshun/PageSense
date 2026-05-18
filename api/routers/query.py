@@ -34,9 +34,7 @@ class QueryRequest(BaseModel):
     )
     # If provided, saves messages to this existing conversation.
     # If None, a new conversation is created automatically.
-    conversation_id: str | None = Field(
-        default=None, description="Conversation to append to. Omit to start a new one."
-    )
+    conversation_id: str | None = Field(default=None, description="Conversation to append to. Omit to start a new one.")
 
 
 @router.post("")

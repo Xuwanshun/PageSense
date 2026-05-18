@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, JSON, MetaData, String, Table, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, MetaData, String, Table, Text
 
 metadata = MetaData()
 
@@ -29,7 +29,7 @@ conversations = Table(
     metadata,
     Column("id", String(36), primary_key=True),
     Column("user_id", String(36), nullable=False),
-    Column("title", String(255), nullable=True),   # first question, truncated
+    Column("title", String(255), nullable=True),  # first question, truncated
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -39,8 +39,8 @@ messages = Table(
     metadata,
     Column("id", String(36), primary_key=True),
     Column("conversation_id", String(36), nullable=False),
-    Column("role", String(10), nullable=False),    # "user" or "assistant"
+    Column("role", String(10), nullable=False),  # "user" or "assistant"
     Column("content", Text, nullable=False),
-    Column("sources", JSON, nullable=True),        # retrieved chunks, stored as JSON
+    Column("sources", JSON, nullable=True),  # retrieved chunks, stored as JSON
     Column("created_at", DateTime(timezone=True), nullable=False),
 )

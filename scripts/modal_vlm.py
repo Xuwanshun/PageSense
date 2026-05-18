@@ -29,17 +29,14 @@ import modal
 
 app = modal.App("qwen3-vl-rag")
 
-image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "torch",
-        "transformers>=5.0.0",
-        "accelerate>=0.30.0",
-        "qwen-vl-utils>=0.0.8",
-        "Pillow",
-        "torchvision",
-        "fastapi[standard]",
-    )
+image = modal.Image.debian_slim(python_version="3.11").pip_install(
+    "torch",
+    "transformers>=5.0.0",
+    "accelerate>=0.30.0",
+    "qwen-vl-utils>=0.0.8",
+    "Pillow",
+    "torchvision",
+    "fastapi[standard]",
 )
 
 MODEL_ID = "azhuang3/qwen3_vlm_task"
@@ -112,7 +109,7 @@ class Model:
                     do_sample=False,
                 )
 
-            new_tokens = output_ids[:, inputs["input_ids"].shape[1]:]
+            new_tokens = output_ids[:, inputs["input_ids"].shape[1] :]
             reply = self.processor.batch_decode(
                 new_tokens,
                 skip_special_tokens=True,
@@ -154,9 +151,7 @@ class Model:
                         qwen_content.append({"type": "text", "text": part["text"]})
                     elif part["type"] == "image_url":
                         # Pass the URL as-is — works for both data: and https: URLs
-                        qwen_content.append(
-                            {"type": "image", "image": part["image_url"]["url"]}
-                        )
+                        qwen_content.append({"type": "image", "image": part["image_url"]["url"]})
 
                 qwen_messages.append({"role": role, "content": qwen_content})
 

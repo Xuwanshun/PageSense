@@ -1,8 +1,7 @@
 import aws_cdk as cdk
-
-from stacks.network_stack import NetworkStack
-from stacks.database_stack import DatabaseStack
 from stacks.app_stack import AppStack
+from stacks.database_stack import DatabaseStack
+from stacks.network_stack import NetworkStack
 
 app = cdk.App()
 
@@ -27,7 +26,8 @@ database.add_dependency(network)
 # ECS Fargate, ALB, ECR, S3, Secrets, Auto Scaling.
 # This is the stack you deploy on every code change.
 application = AppStack(
-    app, "RagAgentApp",
+    app,
+    "RagAgentApp",
     vpc=network.vpc,
     db_instance=database.instance,
     env=env,

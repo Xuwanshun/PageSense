@@ -35,9 +35,9 @@ class NetworkStack(cdk.Stack):
         super().__init__(scope, id, **kwargs)
 
         self.vpc = ec2.Vpc(
-            self, "Vpc",
+            self,
+            "Vpc",
             max_azs=2,  # Spread across 2 Availability Zones for redundancy
-
             # nat_gateways=0 is the key cost-saving decision.
             # NAT Gateways allow private-subnet resources to call OUT to the
             # internet. They cost ~$36/month each. We avoid them by placing
@@ -45,7 +45,6 @@ class NetworkStack(cdk.Stack):
             # The tasks are still protected — Security Groups only allow
             # inbound from the ALB, not from the open internet.
             nat_gateways=0,
-
             subnet_configuration=[
                 # PUBLIC: has a route to the Internet Gateway.
                 # The ALB sits here (it must be internet-facing).
@@ -75,6 +74,7 @@ class NetworkStack(cdk.Stack):
         # Outputs: printed after `cdk deploy` so you can see what was created.
         cdk.CfnOutput(self, "VpcId", value=self.vpc.vpc_id)
         cdk.CfnOutput(
-            self, "PublicSubnets",
+            self,
+            "PublicSubnets",
             value=", ".join([s.subnet_id for s in self.vpc.public_subnets]),
         )

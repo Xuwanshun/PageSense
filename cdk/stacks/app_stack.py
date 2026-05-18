@@ -1,13 +1,29 @@
 import aws_cdk as cdk
 from aws_cdk import (
     aws_ec2 as ec2,
+)
+from aws_cdk import (
     aws_ecr as ecr,
+)
+from aws_cdk import (
     aws_ecs as ecs,
+)
+from aws_cdk import (
     aws_ecs_patterns as ecs_patterns,
+)
+from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
     aws_logs as logs,
+)
+from aws_cdk import (
     aws_rds as rds,
+)
+from aws_cdk import (
     aws_s3 as s3,
+)
+from aws_cdk import (
     aws_secretsmanager as secretsmanager,
 )
 from constructs import Construct
@@ -62,7 +78,8 @@ class AppStack(cdk.Stack):
         # On startup: the app syncs FROM S3 to local disk.
         # After processing: the app syncs TO S3.
         artifacts_bucket = s3.Bucket(
-            self, "ArtifactsBucket",
+            self,
+            "ArtifactsBucket",
             # S3-managed encryption — data at rest is encrypted automatically.
             encryption=s3.BucketEncryption.S3_MANAGED,
             # Block all public access. This bucket should NEVER be public.
@@ -86,7 +103,8 @@ class AppStack(cdk.Stack):
         # ECS pulls from here every time it starts a new container.
         # Only keep 5 images — without this, old images accumulate and cost money.
         repository = ecr.Repository(
-            self, "Repository",
+            self,
+            "Repository",
             removal_policy=cdk.RemovalPolicy.RETAIN,
             lifecycle_rules=[
                 ecr.LifecycleRule(
@@ -112,18 +130,18 @@ class AppStack(cdk.Stack):
         # your apartment. The task role is you, living inside it.
 
         execution_role = iam.Role(
-            self, "ExecutionRole",
+            self,
+            "ExecutionRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
             managed_policies=[
                 # AWS-managed policy covering ECR pull + CloudWatch logs.
-                iam.ManagedPolicy.from_aws_managed_policy_name(
-                    "service-role/AmazonECSTaskExecutionRolePolicy"
-                ),
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AmazonECSTaskExecutionRolePolicy"),
             ],
         )
 
         task_role = iam.Role(
-            self, "TaskRole",
+            self,
+            "TaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
         )
 
@@ -144,24 +162,27 @@ class AppStack(cdk.Stack):
         # resolve the secret correctly. from_secret_name_v2 produces incomplete
         # ARNs that cause ResourceNotFoundException at task startup.
         openai_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self, "OpenAISecret",
-            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/openai-api-key-7KOsxs"
+            self,
+            "OpenAISecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/openai-api-key-7KOsxs",
         )
         jwt_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self, "JwtSecret",
-            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/jwt-secret-key-EMjZaS"
+            self, "JwtSecret", "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/jwt-secret-key-EMjZaS"
         )
         database_url_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self, "DatabaseUrlSecret",
-            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/database-url-Q4fgmt"
+            self,
+            "DatabaseUrlSecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/database-url-Q4fgmt",
         )
         google_client_id_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self, "GoogleClientIdSecret",
-            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/google-client-id-Mo1LtE"
+            self,
+            "GoogleClientIdSecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/google-client-id-Mo1LtE",
         )
         google_client_secret_secret = secretsmanager.Secret.from_secret_complete_arn(
-            self, "GoogleClientSecretSecret",
-            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/google-client-secret-ex0dlq"
+            self,
+            "GoogleClientSecretSecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/google-client-secret-ex0dlq",
         )
 
         # Optional — only referenced when self-hosted VLM (Modal) is configured.
@@ -175,10 +196,12 @@ class AppStack(cdk.Stack):
         # wildcard ARN. Secrets Manager appends a random suffix to ARNs
         # (e.g. rag-agent/foo-Ab1Cd2), so name-based lookups produce incomplete
         # ARNs that don't match the actual resource in IAM policy evaluation.
-        execution_role.add_to_policy(iam.PolicyStatement(
-            actions=["secretsmanager:GetSecretValue"],
-            resources=[f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:rag-agent/*"],
-        ))
+        execution_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:rag-agent/*"],
+            )
+        )
 
         # ── CloudWatch Log Group ───────────────────────────────────────────────
         # All container stdout/stderr goes here.
@@ -186,7 +209,8 @@ class AppStack(cdk.Stack):
         #   fields @timestamp, level, message | filter level = "ERROR"
         # 7-day retention saves cost vs the default (infinite).
         log_group = logs.LogGroup(
-            self, "LogGroup",
+            self,
+            "LogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
@@ -195,8 +219,9 @@ class AppStack(cdk.Stack):
         # The "recipe" ECS follows every time it starts a container.
         # Defines: image, CPU, memory, env vars, secrets, logging, health check.
         task_definition = ecs.FargateTaskDefinition(
-            self, "TaskDef",
-            cpu=2048,               # 2 vCPU — PaddlePaddle minimum requirement
+            self,
+            "TaskDef",
+            cpu=2048,  # 2 vCPU — PaddlePaddle minimum requirement
             memory_limit_mib=8192,  # 8 GB — PaddlePaddle minimum requirement
             execution_role=execution_role,
             task_role=task_role,
@@ -210,51 +235,47 @@ class AppStack(cdk.Stack):
         task_definition.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(repository, tag="latest"),
-
             # Non-sensitive config goes here as plain env vars.
             # Sensitive values (API keys, DB passwords) go in `secrets` below.
             environment={
-                "APP_MODE":                       "api",
-                "LOG_FORMAT":                     "json",
-                "LOG_LEVEL":                      "INFO",
-                "RAW_DOCUMENTS_DIR":              "/app/data/raw",
-                "PROCESSED_DOCUMENTS_DIR":        "/app/data/processed",
-                "VECTORSTORE_DIR":                "/app/data/embedded",
-                "PADDLE_CACHE_DIR":               "/app/paddle_models",
-                "PADDLE_PDX_CACHE_HOME":          "/app/paddle_models",
-                "FLAGS_use_mkldnn":               "0",
-                "FLAGS_enable_pir_in_executor":   "0",
-                "AWS_REGION":                     self.region,
-                "S3_BUCKET_NAME":                 artifacts_bucket.bucket_name,
-                "USE_DOCUMENT_INTELLIGENCE":      "true",
-                "USE_ADAPTIVE_CHUNKING":          "true",
-                "USE_VLM_SUMMARIES":              "true",
-                "USE_QUERY_ENHANCEMENT":          "true",
-                "USE_HYBRID_RETRIEVAL":           "true",
-                "USE_LLM_RERANKER":               "true",
-                "USE_CONTEXT_COMPRESSION":        "true",
-                "USE_FAITHFULNESS_CHECK":         "true",
-                "DOC_FILTER_THRESHOLD":           "0.20",
-                "HTTPS_ONLY":                     "false",
+                "APP_MODE": "api",
+                "LOG_FORMAT": "json",
+                "LOG_LEVEL": "INFO",
+                "RAW_DOCUMENTS_DIR": "/app/data/raw",
+                "PROCESSED_DOCUMENTS_DIR": "/app/data/processed",
+                "VECTORSTORE_DIR": "/app/data/embedded",
+                "PADDLE_CACHE_DIR": "/app/paddle_models",
+                "PADDLE_PDX_CACHE_HOME": "/app/paddle_models",
+                "FLAGS_use_mkldnn": "0",
+                "FLAGS_enable_pir_in_executor": "0",
+                "AWS_REGION": self.region,
+                "S3_BUCKET_NAME": artifacts_bucket.bucket_name,
+                "USE_DOCUMENT_INTELLIGENCE": "true",
+                "USE_ADAPTIVE_CHUNKING": "true",
+                "USE_VLM_SUMMARIES": "true",
+                "USE_QUERY_ENHANCEMENT": "true",
+                "USE_HYBRID_RETRIEVAL": "true",
+                "USE_LLM_RERANKER": "true",
+                "USE_CONTEXT_COMPRESSION": "true",
+                "USE_FAITHFULNESS_CHECK": "true",
+                "DOC_FILTER_THRESHOLD": "0.20",
+                "HTTPS_ONLY": "false",
             },
-
             # Secrets: ECS fetches these from Secrets Manager at container
             # startup and injects them as environment variables.
             # The container sees them as normal env vars — no code changes needed.
             secrets={
-                "OPENAI_API_KEY":        ecs.Secret.from_secrets_manager(openai_secret),
-                "JWT_SECRET_KEY":        ecs.Secret.from_secrets_manager(jwt_secret),
-                "DATABASE_URL":          ecs.Secret.from_secrets_manager(database_url_secret),
-                "GOOGLE_CLIENT_ID":      ecs.Secret.from_secrets_manager(google_client_id_secret),
-                "GOOGLE_CLIENT_SECRET":  ecs.Secret.from_secrets_manager(google_client_secret_secret),
-                "VLM_BASE_URL":          ecs.Secret.from_secrets_manager(vlm_base_url_secret),
+                "OPENAI_API_KEY": ecs.Secret.from_secrets_manager(openai_secret),
+                "JWT_SECRET_KEY": ecs.Secret.from_secrets_manager(jwt_secret),
+                "DATABASE_URL": ecs.Secret.from_secrets_manager(database_url_secret),
+                "GOOGLE_CLIENT_ID": ecs.Secret.from_secrets_manager(google_client_id_secret),
+                "GOOGLE_CLIENT_SECRET": ecs.Secret.from_secrets_manager(google_client_secret_secret),
+                "VLM_BASE_URL": ecs.Secret.from_secrets_manager(vlm_base_url_secret),
             },
-
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="ecs",
                 log_group=log_group,
             ),
-
             # ECS runs this check every 30s. If it fails 3 times in a row,
             # ECS replaces the container with a fresh one automatically.
             # start_period gives Paddle 120s to load models before checking.
@@ -265,7 +286,6 @@ class AppStack(cdk.Stack):
                 retries=3,
                 start_period=cdk.Duration.seconds(120),
             ),
-
             port_mappings=[ecs.PortMapping(container_port=8000)],
         )
 
@@ -274,7 +294,8 @@ class AppStack(cdk.Stack):
         # container_insights=False saves ~$0.15/task/hr while learning.
         # Enable it when you go live (adds CPU/memory graphs in CloudWatch).
         cluster = ecs.Cluster(
-            self, "Cluster",
+            self,
+            "Cluster",
             vpc=vpc,
             container_insights=False,
         )
@@ -290,20 +311,18 @@ class AppStack(cdk.Stack):
         #
         # This replaces ~100 lines of manual Terraform.
         fargate_service = ecs_patterns.ApplicationLoadBalancedFargateService(
-            self, "Service",
+            self,
+            "Service",
             cluster=cluster,
             task_definition=task_definition,
             desired_count=create_count,
-
             # Public subnets + assign_public_ip=True is the no-NAT-Gateway pattern.
             # Tasks have public IPs so they can call OpenAI + ECR directly.
             # They're still protected — the auto-created Security Group only
             # allows inbound on port 8000 from the ALB Security Group.
             task_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             assign_public_ip=True,
-
             public_load_balancer=True,
-
             # Rolling deployment: bring up new tasks before stopping old ones.
             # min_healthy_percent=50 means ECS can take down half the old tasks
             # while the new version starts. With 2 tasks: one new starts, one old
@@ -355,27 +374,32 @@ class AppStack(cdk.Stack):
 
         # ── Outputs ────────────────────────────────────────────────────────────
         cdk.CfnOutput(
-            self, "AppUrl",
+            self,
+            "AppUrl",
             value=f"http://{fargate_service.load_balancer.load_balancer_dns_name}",
             description="Your app URL — open this in a browser after scaling up",
         )
         cdk.CfnOutput(
-            self, "EcrRepositoryUri",
+            self,
+            "EcrRepositoryUri",
             value=repository.repository_uri,
             description="Push Docker images here: docker push <this-uri>:latest",
         )
         cdk.CfnOutput(
-            self, "S3BucketName",
+            self,
+            "S3BucketName",
             value=artifacts_bucket.bucket_name,
             description="S3 bucket for PDF artifacts and vector store",
         )
         cdk.CfnOutput(
-            self, "EcsClusterName",
+            self,
+            "EcsClusterName",
             value=cluster.cluster_name,
             description="Used by scripts/up.sh and scripts/down.sh",
         )
         cdk.CfnOutput(
-            self, "EcsServiceName",
+            self,
+            "EcsServiceName",
             value=fargate_service.service.service_name,
             description="Used by scripts/up.sh and scripts/down.sh",
         )

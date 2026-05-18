@@ -14,7 +14,6 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -57,13 +56,15 @@ async def list_conversations(
                 .limit(1)
             ).first()
 
-            result.append({
-                "id": row.id,
-                "title": row.title or "Untitled",
-                "created_at": row.created_at.isoformat(),
-                "last_message": last.content[:120] if last else None,
-                "last_role": last.role if last else None,
-            })
+            result.append(
+                {
+                    "id": row.id,
+                    "title": row.title or "Untitled",
+                    "created_at": row.created_at.isoformat(),
+                    "last_message": last.content[:120] if last else None,
+                    "last_role": last.role if last else None,
+                }
+            )
 
     return JSONResponse({"conversations": result})
 
@@ -94,26 +95,26 @@ async def get_messages(
             raise HTTPException(status_code=404, detail="Conversation not found")
 
         rows = conn.execute(
-            select(messages)
-            .where(messages.c.conversation_id == conversation_id)
-            .order_by(messages.c.created_at.asc())
+            select(messages).where(messages.c.conversation_id == conversation_id).order_by(messages.c.created_at.asc())
         ).fetchall()
 
-    return JSONResponse({
-        "id": convo.id,
-        "title": convo.title or "Untitled",
-        "created_at": convo.created_at.isoformat(),
-        "messages": [
-            {
-                "id": row.id,
-                "role": row.role,
-                "content": row.content,
-                "sources": row.sources,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ],
-    })
+    return JSONResponse(
+        {
+            "id": convo.id,
+            "title": convo.title or "Untitled",
+            "created_at": convo.created_at.isoformat(),
+            "messages": [
+                {
+                    "id": row.id,
+                    "role": row.role,
+                    "content": row.content,
+                    "sources": row.sources,
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows
+            ],
+        }
+    )
 
 
 @router.delete("/{conversation_id}")

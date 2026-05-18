@@ -1,5 +1,6 @@
 import aws_cdk as cdk
-from aws_cdk import aws_ec2 as ec2, aws_rds as rds
+from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_rds as rds
 from constructs import Construct
 
 
@@ -27,7 +28,8 @@ class DatabaseStack(cdk.Stack):
 
     def __init__(self, scope: Construct, id: str, vpc: ec2.Vpc, **kwargs) -> None:
         super().__init__(
-            scope, id,
+            scope,
+            id,
             # Prevent accidental deletion via `cdk destroy` or console.
             # To intentionally delete: disable this in CDK, deploy once, then destroy.
             termination_protection=True,
@@ -41,7 +43,8 @@ class DatabaseStack(cdk.Stack):
         # We use the VPC CIDR here instead of the ECS security group ID to
         # avoid a cross-stack cyclic dependency (AppStack ↔ DatabaseStack).
         self.db_security_group = ec2.SecurityGroup(
-            self, "DbSecurityGroup",
+            self,
+            "DbSecurityGroup",
             vpc=vpc,
             description="RDS: allow PostgreSQL from within the VPC",
             allow_all_outbound=False,  # DB has no reason to call out
@@ -54,15 +57,14 @@ class DatabaseStack(cdk.Stack):
 
         # The RDS instance itself.
         self.instance = rds.DatabaseInstance(
-            self, "Database",
-
+            self,
+            "Database",
             # Engine: PostgreSQL 15 (latest stable).
             # "Managed" means AWS handles OS patching, minor version upgrades,
             # and hardware failures — you only manage the schema and data.
             engine=rds.DatabaseInstanceEngine.postgres(
                 version=rds.PostgresEngineVersion.VER_15,
             ),
-
             # db.t3.micro = 2 vCPU (burstable), 1 GB RAM.
             # Plenty for an auth DB (users + refresh_tokens tables).
             # This is the free-tier eligible instance type.
@@ -70,9 +72,7 @@ class DatabaseStack(cdk.Stack):
                 ec2.InstanceClass.T3,
                 ec2.InstanceSize.MICRO,
             ),
-
             vpc=vpc,
-
             # Place the DB in isolated subnets.
             # Isolated = no internet route in or out.
             # ECS tasks in public subnets can still reach it via VPC routing.
@@ -80,41 +80,33 @@ class DatabaseStack(cdk.Stack):
                 subnet_type=ec2.SubnetType.PRIVATE_ISOLATED,
             ),
             security_groups=[self.db_security_group],
-
             # CDK auto-generates a strong random password and stores it in
             # Secrets Manager. You never need to see or set the password.
             # The secret contains: { username, password, host, port, dbname }
             credentials=rds.Credentials.from_generated_secret("ragagent"),
             database_name="ragagent",
-
             # Free tier: up to 20 GB storage at no cost.
             # auto_minor_version_upgrade lets AWS apply minor patches (15.3 → 15.4)
             # during your maintenance window automatically.
             allocated_storage=20,
             max_allocated_storage=100,  # autogrow up to 100 GB if needed
             auto_minor_version_upgrade=True,
-
             # Encryption at rest. Always on for production.
             # Data on disk is encrypted with an AWS-managed KMS key.
             storage_encrypted=True,
-
             # multi_az=False = one instance, no standby.
             # If the instance fails, AWS restarts it on new hardware (~5 min).
             # For real production set this True (adds ~$13/month for a standby).
             multi_az=False,
-
             # Daily automated backups, kept for 7 days.
             # You can restore to any point-in-time within this window.
             backup_retention=cdk.Duration.days(7),
-
             # Prevent accidental deletion from the console or CDK.
             deletion_protection=True,
-
             # RETAIN means: if this stack is ever destroyed, leave the RDS
             # instance alone. It won't be deleted. You'd need to manually
             # clean it up from the AWS console if you truly want it gone.
             removal_policy=cdk.RemovalPolicy.RETAIN,
-
             # Don't allow connecting from outside the VPC.
             publicly_accessible=False,
         )
@@ -124,12 +116,14 @@ class DatabaseStack(cdk.Stack):
         # You'll need the endpoint to construct your DATABASE_URL secret.
         # See scripts/create-secrets.sh for instructions.
         cdk.CfnOutput(
-            self, "DbEndpoint",
+            self,
+            "DbEndpoint",
             value=self.instance.db_instance_endpoint_address,
             description="RDS hostname — use this to build your DATABASE_URL",
         )
         cdk.CfnOutput(
-            self, "DbSecretArn",
+            self,
+            "DbSecretArn",
             value=self.instance.secret.secret_arn,
             description="Secrets Manager ARN storing the DB username + password",
         )
