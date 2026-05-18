@@ -73,7 +73,17 @@ Two entry points share the same core pipeline:
 
 **Logging** (`logging_config.py`): text format locally, JSON format in ECS (for CloudWatch Insights). Controlled via `LOG_FORMAT` env var.
 
-**Infra** (`infra/`): Terraform for AWS — ECS Fargate (2 vCPU / 8 GB), ECR, ALB, EFS (Paddle model cache), S3, IAM.
+**Infra** (`cdk/`): AWS CDK (Python) — three stacks deployed in order:
+- `RagAgentNetwork`: VPC, subnets, Internet Gateway
+- `RagAgentDatabase`: RDS PostgreSQL (termination protection on, deploy separately)
+- `RagAgentApp`: ECS Fargate, ALB, ECR, S3, Secrets Manager, Auto Scaling
+
+```bash
+cd cdk
+pip install -r requirements.txt
+cdk diff        # preview changes
+cdk deploy --all  # deploy all stacks
+```
 
 ## Testing Notes
 
@@ -89,4 +99,4 @@ Two entry points share the same core pipeline:
 - `ci.yml`: runs on every push — lint (ruff), unit tests (no Paddle), Docker build check (deps stage only)
 - `deploy.yml`: runs on push to `main` — builds full Docker image, pushes to ECR, updates ECS task definition, rolls out service with health-check gating and automatic rollback
 
-All required AWS secrets are sourced from Terraform outputs (see `infra/outputs.tf`).
+All required AWS secrets are sourced from CDK stack outputs (see `cdk/stacks/app_stack.py`).
