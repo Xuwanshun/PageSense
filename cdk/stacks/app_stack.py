@@ -188,8 +188,10 @@ class AppStack(cdk.Stack):
         # Optional — only referenced when self-hosted VLM (Modal) is configured.
         # If this secret doesn't exist yet, comment it out and the pipeline
         # falls back to gpt-4o automatically.
-        vlm_base_url_secret = secretsmanager.Secret.from_secret_name_v2(
-            self, "VlmBaseUrlSecret", "rag-agent/vlm-base-url"
+        vlm_base_url_secret = secretsmanager.Secret.from_secret_complete_arn(
+            self,
+            "VlmBaseUrlSecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/vlm-base-url-mQRO4V",
         )
 
         # Grant the execution role access to all rag-agent/* secrets using a
