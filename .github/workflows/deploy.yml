@@ -101,8 +101,6 @@ jobs:
           aws-region:            ${{ secrets.AWS_REGION }}
 
       # ── Docker Build + Push ────────────────────────────────────────────────
-      # Buildx must be set up before ECR login so the credential store is
-      # ready — otherwise buildx cache operations get 401 from ECR.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -110,8 +108,6 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-        with:
-          mask-password: "false"
 
       - name: Build and push Docker image to ECR
         id: build-push
@@ -122,10 +118,10 @@ jobs:
           tags: |
             ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
             ${{ secrets.ECR_REPOSITORY_URI }}:latest
-          # Layer caching in ECR: stores the heavy Paddle layers in ECR.
-          # First build: ~20 min (downloads models). Subsequent builds: ~2-3 min.
-          cache-from: type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache
-          cache-to:   type=registry,ref=${{ secrets.ECR_REPOSITORY_URI }}:buildcache,mode=max
+          # Use GitHub Actions cache instead of ECR registry cache.
+          # Avoids ECR credential issues with buildx and is free up to 10 GB.
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
 
       # ── ECS Deploy ────────────────────────────────────────────────────────
       # Derive the task definition family name from the ECS service — no extra
