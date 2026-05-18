@@ -372,3 +372,106 @@ class TestDescribeCrop:
         messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
         system_content = messages[0]["content"]
         assert "SKIP" in system_content  # sentinel instruction included in prompt
+
+
+# ── Self-hosted VLM (HuggingFace endpoint) tests ─────────────────────────────
+
+
+class TestSelfHostedVlm:
+    def test_uses_self_hosted_when_vlm_base_url_set(self, tmp_path):
+        crop = tmp_path / "crop.png"
+        crop.write_bytes(b"PNG")
+        settings = _settings(
+            vlm_base_url="https://test.huggingface.cloud/v1",
+            vlm_hf_token="hf_test",
+            vlm_self_hosted_model="tgi",
+        )
+
+        with patch("document_process.vlm._call_vlm", return_value=("self-hosted desc", True)) as mock_call:
+            description, is_meaningful = _describe_crop(crop, "table", "context", settings)
+
+        assert description == "self-hosted desc"
+        assert is_meaningful is True
+        # First call must use the HF endpoint URL
+        first_call = mock_call.call_args_list[0]
+        assert first_call.kwargs["base_url"] == "https://test.huggingface.cloud/v1"
+        assert first_call.kwargs["model"] == "tgi"
+
+    def test_falls_back_to_gpt4o_on_connection_error(self, tmp_path):
+        crop = tmp_path / "crop.png"
+        crop.write_bytes(b"PNG")
+        settings = _settings(
+            vlm_base_url="https://test.huggingface.cloud/v1",
+            vlm_hf_token="hf_test",
+        )
+
+        def fake_call_vlm(**kwargs):
+            if kwargs.get("base_url") == "https://test.huggingface.cloud/v1":
+                raise ConnectionError("endpoint unreachable")
+            return ("gpt-4o fallback desc", True)
+
+        with patch("document_process.vlm._call_vlm", side_effect=fake_call_vlm):
+            description, is_meaningful = _describe_crop(crop, "table", "context", settings)
+
+        assert description == "gpt-4o fallback desc"
+        assert is_meaningful is True
+
+    def test_falls_back_to_gpt4o_on_timeout(self, tmp_path):
+        crop = tmp_path / "crop.png"
+        crop.write_bytes(b"PNG")
+        settings = _settings(
+            vlm_base_url="https://test.huggingface.cloud/v1",
+            vlm_hf_token="hf_test",
+        )
+
+        call_count = 0
+
+        def fake_call_vlm(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError("request timed out")
+            return ("gpt-4o fallback desc", True)
+
+        with patch("document_process.vlm._call_vlm", side_effect=fake_call_vlm):
+            description, _ = _describe_crop(crop, "table", "context", settings)
+
+        assert description == "gpt-4o fallback desc"
+        assert call_count == 2  # self-hosted tried once, gpt-4o tried once
+
+    def test_no_self_hosted_attempt_when_vlm_base_url_not_set(self, tmp_path):
+        crop = tmp_path / "crop.png"
+        crop.write_bytes(b"PNG")
+        settings = _settings(vlm_base_url=None)
+
+        with patch("document_process.vlm._call_vlm", return_value=("gpt-4o desc", True)) as mock_call:
+            _describe_crop(crop, "table", "context", settings)
+
+        # Only one call, straight to gpt-4o (no HF base_url)
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs.get("base_url") is None
+
+    def test_fallback_uses_gpt4o_model_not_self_hosted_model(self, tmp_path):
+        crop = tmp_path / "crop.png"
+        crop.write_bytes(b"PNG")
+        settings = _settings(
+            vlm_base_url="https://test.huggingface.cloud/v1",
+            vlm_hf_token="hf_test",
+            vlm_self_hosted_model="tgi",
+            vlm_model="gpt-4o",
+        )
+
+        calls = []
+
+        def fake_call_vlm(**kwargs):
+            calls.append(kwargs)
+            if kwargs.get("base_url") == "https://test.huggingface.cloud/v1":
+                raise ConnectionError("down")
+            return ("fallback", True)
+
+        with patch("document_process.vlm._call_vlm", side_effect=fake_call_vlm):
+            _describe_crop(crop, "table", "context", settings)
+
+        # Second call (fallback) must use gpt-4o, not "tgi"
+        assert calls[1]["model"] == "gpt-4o"
+        assert calls[1].get("base_url") is None
