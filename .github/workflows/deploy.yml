@@ -100,28 +100,27 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      # ── Docker Build + Push ────────────────────────────────────────────────
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       # ── ECR Login ─────────────────────────────────────────────────────────
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ── Docker Build + Push ────────────────────────────────────────────────
+      # Plain docker build/push instead of buildx — avoids credential plumbing
+      # issues where buildx's internal daemon doesn't inherit the ECR login.
+      # Uses the previous :latest image as a cache source so only changed
+      # layers are rebuilt.
       - name: Build and push Docker image to ECR
         id: build-push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
-            ${{ secrets.ECR_REPOSITORY_URI }}:latest
-          # Use GitHub Actions cache instead of ECR registry cache.
-          # Avoids ECR credential issues with buildx and is free up to 10 GB.
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
+        run: |
+          docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest || true
+          docker build \
+            --cache-from ${{ secrets.ECR_REPOSITORY_URI }}:latest \
+            -t ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }} \
+            -t ${{ secrets.ECR_REPOSITORY_URI }}:latest \
+            .
+          docker push ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }}
+          docker push ${{ secrets.ECR_REPOSITORY_URI }}:latest
 
       # ── ECS Deploy ────────────────────────────────────────────────────────
       # Derive the task definition family name from the ECS service — no extra
