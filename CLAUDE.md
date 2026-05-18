@@ -38,6 +38,14 @@ PADDLE_AVAILABLE=1 pytest              # include Paddle-dependent tests locally
 ruff check .
 ruff format .
 ruff format --check .                  # check without modifying
+
+# Modal VLM (optional self-hosted Qwen3-VL)
+modal deploy scripts/modal_vlm.py      # deploy to Modal, prints endpoint URL
+modal app stop qwen3-vl-rag            # tear down when idle
+
+# ECS scaling
+./scripts/up.sh                        # scale ECS service to 2 containers
+./scripts/down.sh                      # scale ECS service to 0 (free when idle)
 ```
 
 ## Architecture
@@ -52,20 +60,34 @@ Two entry points share the same core pipeline:
 1. **`document_process/`** — PDF → frozen artifacts
    - `pipeline.py`: orchestrates `DocumentPreprocessingPipeline`
    - Services chain: `DocumentLoaderService` → `OCRService` (PaddleOCR) → `ReadingOrderService` → `LayoutDetectionService` (PP-DocLayout_plus-L) → `AssociationService` → `CroppingService`
+   - `intelligence_service.py`: optional title propagation, section grouping, document descriptor (opt-in via `USE_DOCUMENT_INTELLIGENCE=true`)
    - Outputs `document.json`, `chunks.json`, and cropped region images into `data/processed/<document_id>/`
-   - Optional: `vlm.py` generates `visual_summaries.json` with gpt-4o descriptions for tables/figures (opt-in via `USE_VLM_SUMMARIES=true`)
+   - Optional: `vlm.py` generates `visual_summaries.json` with GPT-4o descriptions for tables/figures (opt-in via `USE_VLM_SUMMARIES=true`). When `VLM_BASE_URL` is set, tries the self-hosted Modal/Qwen3-VL endpoint first and falls back to GPT-4o on any error.
 
 2. **`rag/`** — frozen artifacts → vector index → answers
    - `chunk.py`: converts `ProcessedChunk` → `ChunkRecord` (flat, embeddable)
    - `embed.py`: OpenAI `text-embedding-3-small` via `EmbeddingBackend`
    - `retrieve.py`: `DocumentRetriever` + `JsonVectorStore` (default) or `ChromaVectorStore` (opt-in via `PREFER_CHROMA=true`)
-   - `qa.py`: calls OpenAI `gpt-4.1-mini`, returns `QAResponse` with answer + sources
+   - `hybrid.py`: BM25 + vector Reciprocal Rank Fusion (opt-in via `USE_HYBRID_RETRIEVAL=true`)
+   - `query_enhancement.py`: HyDE + query decomposition + query classification (opt-in via `USE_QUERY_ENHANCEMENT=true`)
+   - `rerank.py`: LLM-based chunk reranking with score threshold filtering (opt-in via `USE_LLM_RERANKER=true`)
+   - `compress.py`: LLM context compression — strips irrelevant content before synthesis (opt-in via `USE_CONTEXT_COMPRESSION=true`)
+   - `faithfulness.py`: claim-by-claim answer verification and rewriting (opt-in via `USE_FAITHFULNESS_CHECK=true`)
+   - `qa.py`: orchestrates the full retrieval + answer pipeline, returns `QAResponse` with answer + sources
 
 3. **`api/`** — FastAPI HTTP layer
    - `app.py`: factory function `create_app(settings)` — always use this pattern for tests
-   - `routers/`: `health` (ALB health checks), `documents` (upload/list/delete), `query` (POST with question), `showcase`
+   - `routers/health.py`: ALB health checks (`GET /health`)
+   - `routers/documents.py`: upload / list / delete documents (`POST/GET/DELETE /documents`)
+   - `routers/query.py`: question answering (`POST /query`)
+   - `routers/auth.py`: JWT login, Google OAuth, token refresh (`POST /auth/...`)
+   - `routers/conversations.py`: conversation history (`GET/POST /conversations`)
    - On startup: syncs artifacts from S3 if `S3_BUCKET_NAME` is set (ECS stateless pattern)
    - Serves static frontend from `api/static/`
+
+4. **`db/`** — database layer
+   - `models.py`: SQLAlchemy models for users and conversations (PostgreSQL on AWS, SQLite locally)
+   - `engine.py`: database engine and session factory
 
 **Configuration** (`config.py`): `Settings` (pydantic-settings) reads all config from env vars / `.env`. Never call `os.getenv()` — always use `Settings`. `ensure_data_dirs(settings)` is called at startup, not inside `Settings.__init__`, so `Settings()` is safe to construct in tests without side effects.
 
@@ -85,6 +107,12 @@ cdk diff        # preview changes
 cdk deploy --all  # deploy all stacks
 ```
 
+**Scripts** (`scripts/`):
+- `modal_vlm.py`: deploys fine-tuned Qwen3-VL model on Modal.com as an OpenAI-compatible endpoint
+- `up.sh` / `down.sh`: scale ECS service to 2 / 0
+- `create-secrets.sh`: creates required Secrets Manager entries before first CDK deploy
+- `set-database-url.sh`: updates the database URL secret after RDS is provisioned
+
 ## Testing Notes
 
 - Tests live in `tests/unit/`
@@ -97,6 +125,11 @@ cdk deploy --all  # deploy all stacks
 
 **GitHub Actions:**
 - `ci.yml`: runs on every push — lint (ruff), unit tests (no Paddle), Docker build check (deps stage only)
-- `deploy.yml`: runs on push to `main` — builds full Docker image, pushes to ECR, updates ECS task definition, rolls out service with health-check gating and automatic rollback
+- `deploy.yml`: runs on push to `main` — builds full Docker image, pushes to ECR, updates ECS task definition, rolls out service with health-check gating and automatic rollback. Concurrency group `deploy-production` prevents parallel deploys — a second push queues behind the first.
 
-All required AWS secrets are sourced from CDK stack outputs (see `cdk/stacks/app_stack.py`).
+All required AWS secrets are stored in Secrets Manager and sourced from CDK stack outputs (see `cdk/stacks/app_stack.py`).
+
+## Key Tags
+
+- `v-pre-qwen`: last clean main before any Qwen3-VL integration
+- `v-with-qwen`: full Qwen3-VL + Modal integration + all deploy fixes
