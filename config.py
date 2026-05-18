@@ -94,6 +94,14 @@ class Settings(BaseSettings):
     use_vlm_summaries: bool = False
     vlm_model: str = "gpt-4o"
 
+    # Self-hosted VLM via HuggingFace Inference Endpoints (optional).
+    # When both are set, the pipeline calls the HF endpoint first and falls
+    # back to vlm_model (gpt-4o) on any connection error or timeout.
+    # Leave unset to use gpt-4o exclusively (existing behaviour).
+    vlm_base_url: str | None = None        # e.g. https://<id>.huggingface.cloud/v1
+    vlm_hf_token: str | None = None        # HuggingFace API token for the endpoint
+    vlm_self_hosted_model: str = "tgi"     # model name the HF endpoint exposes
+
     # ── Document intelligence ─────────────────────────────────────────────────
     # Enables title propagation, section grouping, and a document descriptor.
     # The descriptor's summary embedding is stored in document.json and used

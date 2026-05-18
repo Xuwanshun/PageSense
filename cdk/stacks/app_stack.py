@@ -164,6 +164,16 @@ class AppStack(cdk.Stack):
             "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/google-client-secret-ex0dlq"
         )
 
+        # Optional — only referenced when self-hosted VLM is configured.
+        # If these secrets don't exist yet, comment them out and the pipeline
+        # falls back to gpt-4o automatically.
+        vlm_hf_token_secret = secretsmanager.Secret.from_secret_name_v2(
+            self, "VlmHfTokenSecret", "rag-agent/vlm-hf-token"
+        )
+        vlm_base_url_secret = secretsmanager.Secret.from_secret_name_v2(
+            self, "VlmBaseUrlSecret", "rag-agent/vlm-base-url"
+        )
+
         # Grant the execution role access to all rag-agent/* secrets using a
         # wildcard ARN. Secrets Manager appends a random suffix to ARNs
         # (e.g. rag-agent/foo-Ab1Cd2), so name-based lookups produce incomplete
@@ -240,6 +250,8 @@ class AppStack(cdk.Stack):
                 "DATABASE_URL":          ecs.Secret.from_secrets_manager(database_url_secret),
                 "GOOGLE_CLIENT_ID":      ecs.Secret.from_secrets_manager(google_client_id_secret),
                 "GOOGLE_CLIENT_SECRET":  ecs.Secret.from_secrets_manager(google_client_secret_secret),
+                "VLM_HF_TOKEN":          ecs.Secret.from_secrets_manager(vlm_hf_token_secret),
+                "VLM_BASE_URL":          ecs.Secret.from_secrets_manager(vlm_base_url_secret),
             },
 
             logging=ecs.LogDrivers.aws_logs(

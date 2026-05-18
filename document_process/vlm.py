@@ -144,23 +144,60 @@ def _describe_crop(
     settings: Settings,
 ) -> tuple[str, bool]:
     """
-    Call the OpenAI vision API with the cropped image.
+    Call the vision API with the cropped image.
+
+    Tries the self-hosted HuggingFace endpoint first when vlm_base_url is set.
+    Falls back to gpt-4o on any connection error or timeout.
 
     Returns (description, is_meaningful). When the VLM determines the image
     is a logo, icon, or decorative element with no retrieval value, it responds
     with the SKIP sentinel and is_meaningful is False.
-
-    The surrounding OCR text (context_text) is included as a hint when it
-    contains real content, so the model can anchor its description to the
-    document's own language.
     """
+    if settings.vlm_base_url:
+        try:
+            return _call_vlm(
+                crop_path=crop_path,
+                region_type=region_type,
+                context_text=context_text,
+                api_key=settings.vlm_hf_token or "hf",
+                base_url=settings.vlm_base_url,
+                model=settings.vlm_self_hosted_model,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Self-hosted VLM unavailable (%s) — falling back to %s",
+                exc,
+                settings.vlm_model,
+            )
+
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for VLM summaries.")
 
+    return _call_vlm(
+        crop_path=crop_path,
+        region_type=region_type,
+        context_text=context_text,
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        model=settings.vlm_model,
+    )
+
+
+def _call_vlm(
+    crop_path: Path,
+    region_type: str,
+    context_text: str,
+    api_key: str,
+    base_url: str | None,
+    model: str,
+) -> tuple[str, bool]:
+    """
+    Make a single vision API call. Works with any OpenAI-compatible endpoint.
+    """
     # Lazy import so the rest of the app does not depend on openai at import time
     from openai import OpenAI  # type: ignore
 
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
     image_b64 = base64.b64encode(crop_path.read_bytes()).decode()
 
     system_prompt = _SYSTEM_PROMPTS.get(region_type, _SYSTEM_PROMPTS["figure"])
@@ -186,7 +223,7 @@ def _describe_crop(
     )
 
     response = client.chat.completions.create(
-        model=settings.vlm_model,
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
