@@ -94,7 +94,7 @@ FastAPI  api/app.py  (create_app factory)
   │     └── DELETE /documents/{id}   delete document + S3 artifacts
   │
   ├── /query                  query.py
-  │     └── POST /query       embed question → retrieve chunks → rerank → GPT answer
+  │     └── POST /query       enhance → hybrid retrieve → rerank → compress → GPT → faithfulness check
   │                           saves user message before RAG, assistant message + sources after
   │                           returns conversation_id so follow-ups append to same thread
   │
@@ -132,13 +132,21 @@ messages
 POST /query  { question, doc_filter[], conversation_id }
         │
         ├── 1. Verify JWT → extract user_id
-        ├── 2. Save user message to DB  (before RAG — never silently lost)
-        ├── 3. Embed question           OpenAI text-embedding-3-small
-        ├── 4. Vector search            JsonVectorStore (or ChromaDB)
-        ├── 5. Rerank + compress        LLM reranker, context compression
-        ├── 6. Generate answer          GPT-4.1-mini with retrieved context
-        ├── 7. Save assistant message + sources to DB
-        └── 8. Return { answer, sources[], conversation_id }
+        ├── 2. Save user message to DB       (before RAG — never silently lost)
+        ├── 3. Query enhancement             HyDE + decomposition + classification
+        │                                    (USE_QUERY_ENHANCEMENT, default on)
+        ├── 4. Retrieval
+        │     ├── Hybrid: BM25 + vector RRF  (USE_HYBRID_RETRIEVAL, default on)
+        │     └── Dense only: vector search  (fallback when hybrid off)
+        ├── 5. LLM reranking                 score + filter low-relevance chunks
+        │                                    (USE_LLM_RERANKER, default on)
+        ├── 6. Context compression           strip irrelevant sentences
+        │                                    (USE_CONTEXT_COMPRESSION, default on)
+        ├── 7. Generate answer               GPT-4.1-mini with retrieved context
+        ├── 8. Faithfulness check            verify + rewrite unsupported claims
+        │                                    (USE_FAITHFULNESS_CHECK, default on)
+        ├── 9. Save assistant message + sources to DB
+        └── 10. Return { answer, sources[], conversation_id }
 ```
 
 ```mermaid
@@ -308,6 +316,7 @@ Three CDK stacks deployed in order: Network → Database → App.
 │  │  │  Vector store    │  │  DATABASE_URL                │    │   │
 │  │  │  SSE + versioned │  │  GOOGLE_CLIENT_ID            │    │   │
 │  │  └──────────────────┘  │  GOOGLE_CLIENT_SECRET        │    │   │
+│  │                        │  VLM_BASE_URL (optional)     │    │   │
 │  │                        └──────────────────────────────┘    │   │
 │  │                                                              │   │
 │  │  ECR  (Docker image registry, 5-image lifecycle rule)        │   │
@@ -346,10 +355,12 @@ User types question in browser
         ├── DB: save user message  ──────────────────────────────────┐
         │   (saved BEFORE RAG — never silently lost on failure)      │
         │                                                       RDS PostgreSQL
-        ├── embed question          OpenAI text-embedding-3-small    │
-        ├── vector search           JsonVectorStore (S3-synced)      │
-        ├── rerank + compress       LLM reranker, context window     │
+        ├── query enhancement       HyDE + decomposition             │
+        ├── hybrid retrieval        BM25 + vector RRF (S3-synced)    │
+        ├── LLM rerank              score + filter low-relevance      │
+        ├── context compression     strip irrelevant sentences        │
         ├── generate answer         GPT-4.1-mini                     │
+        ├── faithfulness check      verify + rewrite claims           │
         │                                                            │
         ├── DB: save assistant message + sources  ───────────────────┘
         │
@@ -500,7 +511,7 @@ The preprocessing pipeline uses:
 - PaddleOCR (`PP-OCRv4_mobile`) for text extraction and bounding boxes
 - Paddle `LayoutDetection` (`PP-DocLayout_plus-L`) for text blocks, tables, figures
 - Reading order resolved from OCR bounding box positions
-- Optional GPT-4o vision enrichment for table/figure regions (`USE_VLM_SUMMARIES=true`)
+- Optional GPT-4o vision enrichment for table/figure regions (`USE_VLM_SUMMARIES=true`). When `VLM_BASE_URL` is set, the pipeline calls the self-hosted Modal/Qwen3-VL endpoint first and falls back to GPT-4o on any error or timeout.
 
 Important notes:
 
