@@ -100,19 +100,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      # ── ECR Login ─────────────────────────────────────────────────────────
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # ── Docker Build + Push ────────────────────────────────────────────────
-      # Plain docker build/push instead of buildx — avoids credential plumbing
-      # issues where buildx's internal daemon doesn't inherit the ECR login.
-      # Uses the previous :latest image as a cache source so only changed
-      # layers are rebuilt.
+      # ── ECR Login + Build + Push ──────────────────────────────────────────
       - name: Build and push Docker image to ECR
         id: build-push
         run: |
+          # Explicit ECR login — more reliable than the action wrapper
+          ECR_REGISTRY=$(echo "${{ secrets.ECR_REPOSITORY_URI }}" | cut -d'/' -f1)
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
           docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest || true
           docker build \
             --cache-from ${{ secrets.ECR_REPOSITORY_URI }}:latest \
