@@ -38,8 +38,13 @@ def _run_pipeline(
     settings,
     jobs: dict,
     document_id: str,
+    global_settings=None,
 ) -> None:
     """Run preprocess → index in a background thread and update jobs dict."""
+    # Use global (non-scoped) settings for S3 sync so that user_id subdirectories
+    # are preserved in the S3 key and restored correctly on container restart.
+    # If no global_settings provided, fall back to the passed settings.
+    s3_settings = global_settings or settings
     with _pipeline_semaphore:
         try:
             jobs[document_id]["status"] = "preprocessing"
@@ -54,12 +59,12 @@ def _run_pipeline(
             )
             logger.info("Pipeline complete for document_id=%s", document_id)
 
-            if settings.s3_bucket_name:
+            if s3_settings.s3_bucket_name:
                 from storage.s3 import sync_embedded_to_s3, sync_processed_to_s3
 
                 try:
-                    sync_processed_to_s3(settings)
-                    sync_embedded_to_s3(settings)
+                    sync_processed_to_s3(s3_settings)
+                    sync_embedded_to_s3(s3_settings)
                 except Exception as exc:
                     logger.warning("S3 sync after upload pipeline failed: %s", exc)
         except Exception as exc:
@@ -108,11 +113,11 @@ async def preprocess(request: Request, file: UploadFile, user: dict = Depends(ge
 
     logger.info("Preprocessing complete: document_id=%s chunks=%d", result.document_id, result.chunk_count)
 
-    if scoped.s3_bucket_name:
+    if settings.s3_bucket_name:
         from storage.s3 import sync_processed_to_s3
 
         try:
-            sync_processed_to_s3(scoped)
+            sync_processed_to_s3(settings)
         except Exception as exc:
             # S3 sync failure is not fatal — artifacts are still on local disk.
             logger.warning("S3 sync after preprocess failed: %s", exc)
@@ -160,11 +165,11 @@ async def build_index(request: Request, user: dict = Depends(get_current_user)) 
     total_chunks = sum(indexed.values())
     logger.info("Indexing complete: %d documents, %d chunks", len(indexed), total_chunks)
 
-    if scoped.s3_bucket_name:
+    if settings.s3_bucket_name:
         from storage.s3 import sync_embedded_to_s3
 
         try:
-            sync_embedded_to_s3(scoped)
+            sync_embedded_to_s3(settings)
         except Exception as exc:
             logger.warning("S3 sync after index failed: %s", exc)
 
@@ -265,7 +270,7 @@ async def upload(request: Request, file: UploadFile, user: dict = Depends(get_cu
 
     thread = threading.Thread(
         target=_run_pipeline,
-        args=(dest, scoped, jobs, document_id),
+        args=(dest, scoped, jobs, document_id, settings),
         daemon=True,
     )
     thread.start()

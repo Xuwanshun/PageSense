@@ -50,6 +50,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "*.mov"
+      - "*.mp4"
+      - "*.gif"
 
 # Only one deployment can run at a time.
 # If you push twice quickly, the second run waits for the first to finish.
