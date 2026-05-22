@@ -33,6 +33,17 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 _pipeline_semaphore = threading.Semaphore(1)
 
 
+def _write_job_status(settings, document_id: str, payload: dict) -> None:
+    """Persist job status to disk so it survives ECS task restarts."""
+    try:
+        status_dir = settings.processed_documents_dir / document_id
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status_file = status_dir / "_job_status.json"
+        status_file.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not write _job_status.json for %s: %s", document_id, exc)
+
+
 def _run_pipeline(
     dest: Path,
     settings,
@@ -47,16 +58,18 @@ def _run_pipeline(
     s3_settings = global_settings or settings
     with _pipeline_semaphore:
         try:
+            base = {
+                "document_id": document_id,
+                "source_filename": jobs[document_id].get("source_filename", document_id),
+            }
             jobs[document_id]["status"] = "preprocessing"
+            _write_job_status(settings, document_id, {**base, "status": "preprocessing"})
 
-            def _on_progress(pages_done: int, total_pages: int) -> None:
-                jobs[document_id]["pages_done"] = pages_done
-                jobs[document_id]["total_pages"] = total_pages
+            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
 
-            result = preprocess_document(
-                dest, settings=settings, force=True, document_id=document_id, on_progress=_on_progress
-            )
             jobs[document_id]["status"] = "indexing"
+            _write_job_status(settings, document_id, {**base, "status": "indexing"})
+
             index_all_processed_documents(settings=settings)
             jobs[document_id].update(
                 status="ready",
@@ -64,6 +77,14 @@ def _run_pipeline(
                 page_count=result.page_count,
                 error=None,
             )
+            final = {
+                **base,
+                "status": "ready",
+                "chunk_count": result.chunk_count,
+                "page_count": result.page_count,
+                "error": None,
+            }
+            _write_job_status(settings, document_id, final)
             logger.info("Pipeline complete for document_id=%s", document_id)
 
             if s3_settings.s3_bucket_name:
@@ -77,6 +98,16 @@ def _run_pipeline(
         except Exception as exc:
             logger.exception("Pipeline failed for document_id=%s", document_id)
             jobs[document_id].update(status="error", error=str(exc))
+            _write_job_status(
+                settings,
+                document_id,
+                {
+                    "document_id": document_id,
+                    "source_filename": jobs[document_id].get("source_filename", document_id),
+                    "status": "error",
+                    "error": str(exc),
+                },
+            )
 
 
 @router.post("/preprocess")
@@ -214,13 +245,29 @@ async def list_documents(request: Request, user: dict = Depends(get_current_user
             }
         )
 
-    # Ready documents from filesystem (not in active jobs, e.g. from previous server runs)
+    # Documents from filesystem — covers both completed runs and crash-survived in-progress jobs
     processed_dir = scoped.processed_documents_dir
     if processed_dir.exists():
         for doc_dir in sorted(p for p in processed_dir.iterdir() if p.is_dir()):
             document_id = doc_dir.name
             if document_id in seen:
                 continue
+            # Prefer crash-safe status file written by _run_pipeline
+            status_file = doc_dir / "_job_status.json"
+            if status_file.exists():
+                saved = json.loads(status_file.read_text(encoding="utf-8"))
+                documents.append(
+                    {
+                        "document_id": document_id,
+                        "source_filename": saved.get("source_filename", document_id),
+                        "status": saved.get("status", "preprocessing"),
+                        "chunk_count": saved.get("chunk_count"),
+                        "page_count": saved.get("page_count"),
+                        "error": saved.get("error"),
+                    }
+                )
+                continue
+            # Legacy fallback: fully-completed pipeline written document.json
             doc_path = doc_dir / "document.json"
             chunks_path = doc_dir / "chunks.json"
             if not doc_path.exists():
@@ -311,13 +358,29 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
             }
         )
 
-    # Fall back to filesystem for docs processed before this server run
+    # Fall back to filesystem — survives ECS task restarts
     doc_dir = (scoped.processed_documents_dir / document_id).resolve()
     if not str(doc_dir).startswith(str(scoped.processed_documents_dir.resolve())):
         raise HTTPException(status_code=400, detail="Invalid document_id.")
     if not doc_dir.exists():
         raise HTTPException(status_code=404, detail=f"Document {document_id!r} not found.")
 
+    # Check crash-safe status file written by _run_pipeline on the previous task
+    status_file = doc_dir / "_job_status.json"
+    if status_file.exists():
+        saved = json.loads(status_file.read_text(encoding="utf-8"))
+        # If the previous task was mid-pipeline when it died, report that accurately
+        return JSONResponse(
+            {
+                "document_id": document_id,
+                "status": saved.get("status", "preprocessing"),
+                "error": saved.get("error"),
+                "chunk_count": saved.get("chunk_count"),
+                "page_count": saved.get("page_count"),
+            }
+        )
+
+    # Legacy fallback: document.json + chunks.json written by a completed pipeline
     chunks_path = doc_dir / "chunks.json"
     doc_path = doc_dir / "document.json"
     chunk_count = len(json.loads(chunks_path.read_text(encoding="utf-8"))) if chunks_path.exists() else None
