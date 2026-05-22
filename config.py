@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str | None = None
     jwt_algorithm: str = "HS256"
     database_url: str = "sqlite:///data/auth.db"
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
     https_only: bool = False
     google_client_id: str | None = None

@@ -342,6 +342,15 @@ class AppStack(cdk.Stack):
             [{"Key": "idle_timeout.timeout_seconds", "Value": "600"}],
         )
 
+        # Sticky sessions: pin each client to the same ECS task for the
+        # duration of a session. Without this, a multi-task deployment causes
+        # upload (→ task A) and status-poll (→ task B) to hit different
+        # containers, resulting in 404s because task B has no in-memory job
+        # record for the upload that task A is processing.
+        fargate_service.target_group.enable_cookie_stickiness(
+            cdk.Duration.hours(1)
+        )
+
         # Health check: ALB pings /health every 30s.
         # Only sends traffic to containers returning 200. Sick containers
         # get no traffic and ECS replaces them automatically.
