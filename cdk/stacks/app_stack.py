@@ -262,6 +262,11 @@ class AppStack(cdk.Stack):
                 "USE_FAITHFULNESS_CHECK": "true",
                 "DOC_FILTER_THRESHOLD": "0.20",
                 "HTTPS_ONLY": "false",
+                # Optional: override VLM endpoint via CDK context for a vLLM/EC2 instance.
+                # VLM_BASE_URL (Modal/Qwen endpoint) is injected via Secrets below.
+                "QWEN_BASE_URL": self.node.try_get_context("qwen_base_url") or "",
+                "QWEN_MODEL": self.node.try_get_context("qwen_model") or "Qwen/Qwen3-VL-4B-Instruct",
+                "QWEN_API_KEY": "not-needed",
             },
             # Secrets: ECS fetches these from Secrets Manager at container
             # startup and injects them as environment variables.

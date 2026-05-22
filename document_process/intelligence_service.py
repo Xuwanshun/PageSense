@@ -76,7 +76,7 @@ class DocumentIntelligenceService:
 
         # Step C: richer VLM reading for visual regions (extends USE_VLM_SUMMARIES)
         visual_summaries: dict[str, dict[str, Any]] = {}
-        if self.settings.use_vlm_summaries and self.settings.openai_api_key:
+        if self.settings.use_vlm_summaries and (self.settings.openai_api_key or self.settings.qwen_base_url):
             for section in sections:
                 for region in section.regions:
                     if region.region_type in _VISUAL_REGION_TYPES and region.crop_path:
@@ -96,7 +96,7 @@ class DocumentIntelligenceService:
         # Step D: section and document summarization
         descriptor: dict[str, Any] = {}
         summary_embedding: list[float] = []
-        if self.settings.use_document_intelligence and self.settings.openai_api_key:
+        if self.settings.use_document_intelligence and (self.settings.openai_api_key or self.settings.qwen_base_url):
             section_summaries: list[dict[str, Any]] = []
             for section in sections:
                 visual_for_section = {
@@ -226,12 +226,20 @@ class DocumentIntelligenceService:
         """Call vision API for a single cropped region; return structured JSON."""
         from openai import OpenAI  # lazy import
 
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for VLM visual reading.")
-
         crop_path = Path(region.crop_path)  # type: ignore[arg-type]
         image_b64 = base64.b64encode(crop_path.read_bytes()).decode()
         context_snippet = section.flat_text[:300]
+
+        if self.settings.qwen_base_url:
+            vlm_api_key = self.settings.qwen_api_key
+            vlm_base_url: str | None = self.settings.qwen_base_url
+            vlm_model = self.settings.qwen_model
+        elif self.settings.openai_api_key:
+            vlm_api_key = self.settings.openai_api_key
+            vlm_base_url = self.settings.openai_base_url
+            vlm_model = self.settings.vlm_model
+        else:
+            raise RuntimeError("OPENAI_API_KEY or QWEN_BASE_URL is required for VLM visual reading.")
 
         few_shot = (
             "Examples of expected output:\n"
@@ -272,9 +280,9 @@ class DocumentIntelligenceService:
                 },
             },
         ]
-        client = OpenAI(api_key=self.settings.openai_api_key, base_url=self.settings.openai_base_url)
+        client = OpenAI(api_key=vlm_api_key, base_url=vlm_base_url)
         response = client.chat.completions.create(
-            model=self.settings.vlm_model,
+            model=vlm_model,
             messages=[
                 {"role": "system", "content": "You are a document analysis assistant. Return only valid JSON."},
                 {"role": "user", "content": user_content},
@@ -383,8 +391,14 @@ class DocumentIntelligenceService:
         return result
 
     def _build_descriptor_client(self) -> OpenAIJSONModelClient:
+        if self.settings.qwen_base_url:
+            return OpenAIJSONModelClient(
+                model=self.settings.qwen_model,
+                api_key=self.settings.qwen_api_key,
+                base_url=self.settings.qwen_base_url,
+            )
         if not self.settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for document intelligence.")
+            raise RuntimeError("OPENAI_API_KEY or QWEN_BASE_URL is required for document intelligence.")
         return OpenAIJSONModelClient(
             model=self.settings.descriptor_model,
             api_key=self.settings.openai_api_key,
@@ -409,13 +423,13 @@ class DocumentIntelligenceService:
                 "reason": "default settings — USE_ADAPTIVE_CHUNKING is disabled",
             }
 
-        if not self.settings.openai_api_key:
+        if not (self.settings.openai_api_key or self.settings.qwen_base_url):
             return {
                 "strategy": "semantic_fixed",
                 "chunk_size": self.settings.preprocess_chunk_size,
                 "overlap": self.settings.preprocess_chunk_overlap,
                 "keep_tables_intact": False,
-                "reason": "OPENAI_API_KEY not set — using default strategy",
+                "reason": "OPENAI_API_KEY and QWEN_BASE_URL not set — using default strategy",
             }
 
         total_sections = len(sections)

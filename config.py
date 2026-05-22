@@ -87,6 +87,19 @@ class Settings(BaseSettings):
     # "api"  → start the FastAPI server (python main.py --serve)
     app_mode: Literal["cli", "api"] = "cli"
 
+    # ── Qwen VLM endpoint (fine-tuned Qwen3-VL-4B) ───────────────────────────
+    # When set, VLM summaries and document-intelligence descriptor calls are
+    # routed to this endpoint instead of OpenAI.  Point it at a vLLM server
+    # running your SFT checkpoint:
+    #   vllm serve /path/to/qwen3-vl-4b-sft --dtype auto --port 8001
+    # Then set:
+    #   QWEN_BASE_URL=http://localhost:8001/v1
+    #   QWEN_MODEL=your-checkpoint-name   (as registered in vLLM)
+    #   QWEN_API_KEY=not-needed           (vLLM accepts any non-empty string)
+    qwen_base_url: str | None = None
+    qwen_model: str = "Qwen/Qwen3-VL-4B-Instruct"
+    qwen_api_key: str = "not-needed"
+
     # ── VLM visual summaries ──────────────────────────────────────────────────
     # When enabled, each cropped table/figure is sent to the vision model and
     # the returned description replaces the OCR-text fallback in

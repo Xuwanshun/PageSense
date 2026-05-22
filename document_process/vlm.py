@@ -146,17 +146,32 @@ def _describe_crop(
     """
     Call the vision API with the cropped image.
 
-    Tries the self-hosted Modal endpoint first when vlm_base_url is set,
-    using a longer timeout to accommodate cold-start latency (~2-3 min).
-    Falls back to gpt-4o on any connection error or timeout.
+    Priority: Qwen vLLM (qwen_base_url) → self-hosted VLM (vlm_base_url, Modal) → OpenAI.
+    Each option falls back to the next on any connection error or timeout.
 
     Returns (description, is_meaningful). When the VLM determines the image
     is a logo, icon, or decorative element with no retrieval value, it responds
     with the SKIP sentinel and is_meaningful is False.
     """
+    if settings.qwen_base_url:
+        try:
+            return _call_vlm(
+                crop_path=crop_path,
+                region_type=region_type,
+                context_text=context_text,
+                api_key=settings.qwen_api_key,
+                base_url=settings.qwen_base_url,
+                model=settings.qwen_model,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Qwen VLM unavailable (%s) — falling back to next option",
+                exc,
+            )
+
     if settings.vlm_base_url:
         try:
-            result = _call_vlm(
+            return _call_vlm(
                 crop_path=crop_path,
                 region_type=region_type,
                 context_text=context_text,
@@ -179,7 +194,7 @@ def _describe_crop(
     logger.info("VLM backend used: %s", settings.vlm_model)
 
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for VLM summaries.")
+        raise RuntimeError("OPENAI_API_KEY or VLM_BASE_URL is required for VLM summaries.")
 
     return _call_vlm(
         crop_path=crop_path,
