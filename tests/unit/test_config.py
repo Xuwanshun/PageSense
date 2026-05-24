@@ -102,3 +102,19 @@ def test_settings_path_fields_are_path_objects(tmp_settings):
     assert isinstance(tmp_settings.processed_documents_dir, Path)
     assert isinstance(tmp_settings.vectorstore_dir, Path)
     assert isinstance(tmp_settings.paddle_cache_dir, Path)
+
+
+def test_default_page_batch_size():
+    from config import Settings
+    s = Settings(openai_api_key="fake")
+    assert s.preprocess_page_batch_size == 25
+
+
+def test_page_batch_size_from_env(monkeypatch):
+    monkeypatch.setenv("PREPROCESS_PAGE_BATCH_SIZE", "10")
+    from importlib import reload
+    import config
+    reload(config)
+    from config import Settings
+    s = Settings(openai_api_key="fake")
+    assert s.preprocess_page_batch_size == 10

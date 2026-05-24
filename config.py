@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     preprocess_chunk_size: int = 1800
     preprocess_chunk_overlap: int = 200
     pdf_render_scale: float = 2.0
+    # Maximum pages processed per batch during OCR + layout. Lower values use
+    # less peak RAM; higher values reduce per-batch model warm-up overhead.
+    # 25 keeps peak memory well under 4 GB headroom on the 8 GB Fargate task.
+    preprocess_page_batch_size: int = 25
     default_top_k: int = 4
     # Set to True if you have chromadb installed and prefer it over the
     # built-in JSON vector store.
