@@ -146,7 +146,8 @@ def _describe_crop(
     """
     Call the vision API with the cropped image.
 
-    Tries the self-hosted HuggingFace endpoint first when vlm_base_url is set.
+    Tries the self-hosted Modal endpoint first when vlm_base_url is set,
+    using a longer timeout to accommodate cold-start latency (~2-3 min).
     Falls back to gpt-4o on any connection error or timeout.
 
     Returns (description, is_meaningful). When the VLM determines the image
@@ -162,6 +163,9 @@ def _describe_crop(
                 api_key="modal",
                 base_url=settings.vlm_base_url,
                 model=settings.vlm_self_hosted_model,
+                # Modal cold-start takes 2-3 min; use a generous timeout so the
+                # first request in a session doesn't immediately fall back to GPT-4o.
+                timeout=300.0,
             )
         except Exception as exc:
             logger.warning(
@@ -190,6 +194,7 @@ def _call_vlm(
     api_key: str,
     base_url: str | None,
     model: str,
+    timeout: float = 30.0,
 ) -> tuple[str, bool]:
     """
     Make a single vision API call. Works with any OpenAI-compatible endpoint.
@@ -197,7 +202,7 @@ def _call_vlm(
     # Lazy import so the rest of the app does not depend on openai at import time
     from openai import OpenAI  # type: ignore
 
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
     image_b64 = base64.b64encode(crop_path.read_bytes()).decode()
 
     system_prompt = _SYSTEM_PROMPTS.get(region_type, _SYSTEM_PROMPTS["figure"])
