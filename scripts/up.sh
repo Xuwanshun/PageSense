@@ -50,7 +50,7 @@ if [ "$DB_STATUS" = "stopped" ]; then
   echo "Starting RDS instance $DB_INSTANCE (was stopped)..."
   aws rds start-db-instance \
     --db-instance-identifier "$DB_INSTANCE" \
-    --region "$REGION" --output none
+    --region "$REGION" --output text --query "DBInstance.DBInstanceStatus"
   echo "RDS starting — waiting until available (3-5 min)..."
   aws rds wait db-instance-available \
     --db-instance-identifier "$DB_INSTANCE" \

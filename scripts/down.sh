@@ -52,7 +52,7 @@ if [ "$DB_STATUS" = "available" ]; then
   echo "Stopping RDS instance $DB_INSTANCE..."
   aws rds stop-db-instance \
     --db-instance-identifier "$DB_INSTANCE" \
-    --region "$REGION" --output none
+    --region "$REGION" --output text --query "DBInstance.DBInstanceStatus"
   echo "RDS stopping."
 elif [ "$DB_STATUS" = "stopped" ]; then
   echo "RDS already stopped."
