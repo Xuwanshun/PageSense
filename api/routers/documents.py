@@ -296,6 +296,7 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
 
     if document_id in jobs:
         job = jobs[document_id]
+        is_preprocessing = job["status"] == "preprocessing"
         return JSONResponse(
             {
                 "document_id": document_id,
@@ -303,8 +304,8 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
                 "error": job.get("error"),
                 "chunk_count": job.get("chunk_count"),
                 "page_count": job.get("page_count"),
-                "pages_done": job.get("pages_done"),
-                "total_pages": job.get("total_pages"),
+                "pages_done": job.get("pages_done") if is_preprocessing else None,
+                "total_pages": job.get("total_pages") if is_preprocessing else None,
             }
         )
 
@@ -326,5 +327,7 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
             "error": None,
             "chunk_count": chunk_count,
             "page_count": doc_data.get("page_count"),
+            "pages_done": None,
+            "total_pages": None,
         }
     )

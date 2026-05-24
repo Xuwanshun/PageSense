@@ -152,3 +152,23 @@ def test_status_pages_done_null_when_not_set(client):
     body = r.json()
     assert body["pages_done"] is None
     assert body["total_pages"] is None
+
+
+def test_status_pages_done_null_when_ready(client):
+    """pages_done and total_pages must be null in the response when status is ready."""
+    app = client.app
+    app.state.jobs["done_doc"] = {
+        "status": "ready",
+        "error": None,
+        "chunk_count": 42,
+        "page_count": 10,
+        "pages_done": 10,
+        "total_pages": 10,
+        "source_filename": "done.pdf",
+    }
+    r = client.get("/documents/status/done_doc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    assert body["pages_done"] is None
+    assert body["total_pages"] is None
