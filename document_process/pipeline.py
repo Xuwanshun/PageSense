@@ -4,9 +4,16 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from config import Settings
-from document_process.models import ProcessingIssue
+from document_process.models import (
+    LayoutRegion,
+    OCRPageResult,
+    OrderedTextBlock,
+    ProcessingIssue,
+    RegionAssociation,
+)
 from document_process.services import (
     AssociationService,
     CroppingService,
@@ -66,14 +73,15 @@ class DocumentPreprocessingPipeline:
         batches = [all_pages[i : i + batch_size] for i in range(0, total_pages, batch_size)]
         total_batches = len(batches)
 
-        all_ocr_pages: list = []
-        all_regions: list = []
-        all_associations: list = []
-        all_ordered_blocks: list = []
-        merged_ro_pages: list = []
-        merged_ro_ids: list = []
-        merged_ordered_text_pages: list = []
+        all_ocr_pages: list[OCRPageResult] = []
+        all_regions: list[LayoutRegion] = []
+        all_associations: list[RegionAssociation] = []
+        all_ordered_blocks: list[OrderedTextBlock] = []
+        merged_ro_pages: list[dict[str, Any]] = []
+        merged_ro_ids: list[str] = []
+        merged_ordered_text_pages: list[dict[str, Any]] = []
         layout_model = "unknown"
+        batch_resolver = "unknown"
         next_block_index = 1
 
         for batch_num, batch in enumerate(batches, start=1):
@@ -97,6 +105,7 @@ class DocumentPreprocessingPipeline:
                 ocr_batch, ro_batch, regions_batch, start_index=next_block_index
             )
 
+            batch_resolver = ro_batch.get("resolver", "unknown")
             all_ocr_pages.extend(ocr_batch)
             all_regions.extend(regions_batch)
             all_associations.extend(assocs_batch)
@@ -105,10 +114,10 @@ class DocumentPreprocessingPipeline:
             merged_ro_pages.extend(ro_batch.get("pages", []))
             merged_ordered_text_pages.extend(ordered_text_batch.get("pages", []))
 
-            next_block_index += len(batch)
+            next_block_index += len(blocks_batch)
 
         reading_order = {
-            "resolver": "ocr_bbox_sort_v1",
+            "resolver": batch_resolver,
             "document_order_item_ids": merged_ro_ids,
             "pages": merged_ro_pages,
         }

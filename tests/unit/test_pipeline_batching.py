@@ -7,16 +7,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from document_process.models import (
     BoundingBox,
-    CroppedRegionAsset,
     LayoutRegion,
     OCRPageResult,
     OCRTextItem,
     OrderedTextBlock,
-    ProcessedChunk,
     RegionAssociation,
 )
 from document_process.services import (
