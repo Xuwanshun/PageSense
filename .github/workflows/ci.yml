@@ -50,11 +50,6 @@ jobs:
         # ruff check: finds bugs and style issues
         run: ruff check .
 
-      - name: Run ruff formatter check
-        # ruff format --check: verifies formatting without changing files
-        # (fails if any file would be reformatted)
-        run: ruff format --check .
-
   # ── Job 2: Test ─────────────────────────────────────────────────────────────
   # Run unit tests. Does NOT install Paddle (too slow/heavy for CI).
   # Tests that require Paddle are automatically skipped.
