@@ -87,7 +87,7 @@ export function initSidebar({ onSelectionChange, authedFetch }) {
   }
 
   // ── Card rendering ────────────────────────────────────────
-  function addOrUpdateCard(document_id, source_filename, status, chunk_count, page_count) {
+  function addOrUpdateCard(document_id, source_filename, status, chunk_count, page_count, error = null, pages_done = null, total_pages = null) {
     emptyEl.hidden = true;
 
     if (docCards.has(document_id)) {
