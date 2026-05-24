@@ -72,10 +72,10 @@ export function initSidebar({ onSelectionChange, authedFetch }) {
   function poll(document_id) {
     authedFetch(`/documents/status/${document_id}`)
       .then((r) => r.json())
-      .then(({ status, error, chunk_count, page_count }) => {
+      .then(({ status, error, chunk_count, page_count, pages_done, total_pages }) => {
         const card = docCards.get(document_id);
         if (!card) return;
-        updateCardStatus(card, document_id, status, chunk_count, page_count, error);
+        updateCardStatus(card, document_id, status, chunk_count, page_count, error, pages_done, total_pages);
         if (status === 'ready' || status === 'error') {
           stopPolling(document_id);
           if (status === 'ready') {
@@ -91,7 +91,7 @@ export function initSidebar({ onSelectionChange, authedFetch }) {
     emptyEl.hidden = true;
 
     if (docCards.has(document_id)) {
-      updateCardStatus(docCards.get(document_id), document_id, status, chunk_count, page_count, null);
+      updateCardStatus(docCards.get(document_id), document_id, status, chunk_count, page_count, null, null, null);
       return;
     }
 
@@ -129,15 +129,18 @@ export function initSidebar({ onSelectionChange, authedFetch }) {
     docNames.set(document_id, source_filename);
 
     if (status === 'ready') enableCard(li, document_id);
-    updateCardStatus(li, document_id, status, chunk_count, page_count, null);
+    updateCardStatus(li, document_id, status, chunk_count, page_count, null, null, null);
   }
 
-  function updateCardStatus(li, _document_id, status, chunk_count, page_count, error) {
+  function updateCardStatus(li, _document_id, status, chunk_count, page_count, error, pages_done, total_pages) {
     const pipeline = li.querySelector('.doc-card__pipeline');
 
     if (status === 'preprocessing') {
+      const progress = (pages_done != null && total_pages != null && total_pages > 0)
+        ? ` ${pages_done} / ${total_pages} pages`
+        : '…';
       if (pipeline) pipeline.innerHTML = `
-        <div class="pipeline-step pipeline-step--active">⟳ Preprocessing…</div>
+        <div class="pipeline-step pipeline-step--active">⟳ Preprocessing${progress}</div>
         <div class="pipeline-step pipeline-step--pending">○ Indexing</div>
       `;
     } else if (status === 'indexing') {
