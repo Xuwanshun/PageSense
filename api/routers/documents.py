@@ -48,7 +48,12 @@ def _run_pipeline(
     with _pipeline_semaphore:
         try:
             jobs[document_id]["status"] = "preprocessing"
-            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
+
+            def _on_progress(pages_done: int, total_pages: int) -> None:
+                jobs[document_id]["pages_done"] = pages_done
+                jobs[document_id]["total_pages"] = total_pages
+
+            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id, on_progress=_on_progress)
             jobs[document_id]["status"] = "indexing"
             index_all_processed_documents(settings=settings)
             jobs[document_id].update(
@@ -298,6 +303,8 @@ async def document_status(document_id: str, request: Request, user: dict = Depen
                 "error": job.get("error"),
                 "chunk_count": job.get("chunk_count"),
                 "page_count": job.get("page_count"),
+                "pages_done": job.get("pages_done"),
+                "total_pages": job.get("total_pages"),
             }
         )
 

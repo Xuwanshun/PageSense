@@ -116,3 +116,39 @@ def test_status_returns_ready_from_filesystem(client, tmp_settings):
     assert body["chunk_count"] == 2
     assert body["page_count"] == 5
     assert body["error"] is None
+
+
+def test_status_includes_pages_done_when_preprocessing(client):
+    """Status response must include pages_done and total_pages from the jobs dict."""
+    app = client.app
+    app.state.jobs["progressing_doc"] = {
+        "status": "preprocessing",
+        "error": None,
+        "chunk_count": None,
+        "page_count": None,
+        "pages_done": 40,
+        "total_pages": 500,
+        "source_filename": "big.pdf",
+    }
+    r = client.get("/documents/status/progressing_doc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pages_done"] == 40
+    assert body["total_pages"] == 500
+
+
+def test_status_pages_done_null_when_not_set(client):
+    """pages_done and total_pages must be null when not yet written to jobs dict."""
+    app = client.app
+    app.state.jobs["new_doc"] = {
+        "status": "preprocessing",
+        "error": None,
+        "chunk_count": None,
+        "page_count": None,
+        "source_filename": "new.pdf",
+    }
+    r = client.get("/documents/status/new_doc")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pages_done"] is None
+    assert body["total_pages"] is None
