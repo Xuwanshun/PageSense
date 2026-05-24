@@ -53,6 +53,14 @@ def tmp_settings(tmp_path):
         log_level="WARNING",
         jwt_secret_key="test-secret-key-for-unit-tests",
         database_url=f"sqlite:///{tmp_path}/auth.db",
+        use_document_intelligence=False,
+        use_adaptive_chunking=False,
+        use_vlm_summaries=False,
+        use_query_enhancement=False,
+        use_hybrid_retrieval=False,
+        use_llm_reranker=False,
+        use_context_compression=False,
+        use_faithfulness_check=False,
     )
 
     class _CallableSettings(Settings):
