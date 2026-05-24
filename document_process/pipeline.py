@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,7 +63,13 @@ class DocumentPreprocessingPipeline:
         self.association = association or AssociationService()
         self.cropping = cropping or CroppingService()
 
-    def run(self, source_path: Path, *, document_id: str | None = None) -> PreprocessingResult:
+    def run(
+        self,
+        source_path: Path,
+        *,
+        document_id: str | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> PreprocessingResult:
         logger.info("Starting document preprocessing for %s", source_path)
         loaded = self.loader.load(source_path, document_id=document_id)
         issues: list[ProcessingIssue] = []
@@ -83,6 +90,13 @@ class DocumentPreprocessingPipeline:
         layout_model = "unknown"
         batch_resolver = "unknown"
         next_block_index = 1
+        pages_done = 0
+
+        def _on_page_done() -> None:
+            nonlocal pages_done
+            pages_done += 1
+            if on_progress is not None and total_pages > 0:
+                on_progress(pages_done, total_pages)
 
         for batch_num, batch in enumerate(batches, start=1):
             first_page = batch[0].page_number
@@ -92,7 +106,7 @@ class DocumentPreprocessingPipeline:
                 batch_num, total_batches, first_page, last_page,
             )
 
-            ocr_batch, ocr_issues = self.ocr.extract(batch)
+            ocr_batch, ocr_issues = self.ocr.extract(batch, on_page_done=_on_page_done)
             issues.extend(ocr_issues)
 
             ro_batch, ro_issues = self.reading_order.resolve(ocr_batch)
@@ -259,6 +273,7 @@ def preprocess_document(
     settings: Settings | None = None,
     document_id: str | None = None,
     force: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> PreprocessingResult:
     resolved_settings = settings or Settings()
     source_path = Path(source_name_or_path)
@@ -283,4 +298,4 @@ def preprocess_document(
             warnings=[],
         )
     pipeline = DocumentPreprocessingPipeline(resolved_settings, loader=loader)
-    return pipeline.run(source_path, document_id=resolved_id)
+    return pipeline.run(source_path, document_id=resolved_id, on_progress=on_progress)

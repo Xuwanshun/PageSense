@@ -82,8 +82,11 @@ def _build_pipeline(settings, tmp_path, num_pages: int):
     loader_mock.load.return_value = loaded
 
     ocr_mock = MagicMock()
-    def ocr_extract(batch_pages):
+    def ocr_extract(batch_pages, *, on_page_done=None):
         nums = [p.page_number for p in batch_pages]
+        if on_page_done is not None:
+            for _ in batch_pages:
+                on_page_done()
         return [o for o in ocr_pages if o.page_number in nums], []
     ocr_mock.extract.side_effect = ocr_extract
 
@@ -269,3 +272,34 @@ def test_batch_progress_logged(
 
     batch_logs = [r for r in caplog.records if "Batch" in r.message and "pages" in r.message]
     assert len(batch_logs) == 2  # 4 pages / 2 per batch = 2 batches
+
+
+@patch("document_process.pipeline.build_chunks", return_value=[])
+@patch("document_process.pipeline.build_visual_summaries", return_value=[])
+@patch("document_process.pipeline.build_document_artifacts")
+@patch("document_process.pipeline.export_artifacts")
+def test_on_progress_receives_cumulative_page_counts(
+    mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path
+):
+    """on_progress must be called with (pages_done, total_pages) for each page,
+    accumulating across batches."""
+    mock_export.return_value = tmp_path / "processed" / "document.json"
+    (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
+    mock_build_doc.return_value = (MagicMock(), MagicMock())
+
+    settings = tmp_settings(preprocess_page_batch_size=2)
+    pipeline = _build_pipeline(settings, tmp_path, num_pages=4)
+
+    progress_calls = []
+    pipeline.run(
+        tmp_path / "test.pdf",
+        document_id="test-doc",
+        on_progress=lambda done, total: progress_calls.append((done, total)),
+    )
+
+    # 4 pages → on_progress called 4 times
+    assert len(progress_calls) == 4
+    # pages_done increments from 1 to 4
+    assert [c[0] for c in progress_calls] == [1, 2, 3, 4]
+    # total_pages is always 4
+    assert all(c[1] == 4 for c in progress_calls)
