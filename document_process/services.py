@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # ── PaddlePaddle 3.3.x stability patches ─────────────────────────────────────
 # PaddlePaddle 3.3.x on x86 CPU crashes during inference via its PIR executor.
@@ -159,7 +159,12 @@ class DocumentLoaderService:
 
 
 class OCRService:
-    def extract(self, pages: list[PageContext]) -> tuple[list[OCRPageResult], list[ProcessingIssue]]:
+    def extract(
+        self,
+        pages: list[PageContext],
+        *,
+        on_page_done: Callable[[], None] | None = None,
+    ) -> tuple[list[OCRPageResult], list[ProcessingIssue]]:
         logger.info("Running PaddleOCR text extraction on %s page(s)", len(pages))
         ocr = _get_paddle_ocr()
         results: list[OCRPageResult] = []
@@ -216,6 +221,11 @@ class OCRService:
                     page_image_path=str(page.page_image_path),
                 )
             )
+            try:
+                if on_page_done is not None:
+                    on_page_done()
+            except Exception:
+                pass
         return results, issues
 
 

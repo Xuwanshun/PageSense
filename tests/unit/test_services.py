@@ -18,6 +18,7 @@ Nothing here touches Paddle, OpenAI, or the filesystem.
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from document_process.models import (
     BoundingBox,
@@ -656,3 +657,35 @@ class TestAssociationService:
         svc = AssociationService()
         _, blocks, _ = svc.associate([page], reading_order, [region], start_index=5)
         assert blocks[0].block_id == "p1_block_5"
+
+
+def test_ocr_extract_calls_on_page_done_once_per_page():
+    """on_page_done must be called exactly once per page processed."""
+    import tempfile
+    from pathlib import Path
+    from document_process.services import OCRService, PageContext
+
+    with tempfile.TemporaryDirectory() as d:
+        paths = []
+        for i in range(2):
+            p = Path(d) / f"page_{i+1}.png"
+            p.write_bytes(b"fake")
+            paths.append(p)
+
+        pages = [
+            PageContext(page_number=i+1, width=100.0, height=200.0, page_image_path=paths[i])
+            for i in range(2)
+        ]
+
+        svc = OCRService()
+        fake_result = MagicMock()
+        fake_result.json = {"res": {"rec_texts": [], "rec_scores": [], "rec_boxes": [], "dt_polys": []}}
+        fake_predictor = MagicMock()
+        fake_predictor.predict.return_value = [fake_result]
+
+        callback = MagicMock()
+
+        with patch("document_process.services._get_paddle_ocr", return_value=fake_predictor):
+            svc.extract(pages, on_page_done=callback)
+
+        assert callback.call_count == 2
