@@ -17,8 +17,11 @@ Nothing here touches Paddle, OpenAI, or the filesystem.
 
 from __future__ import annotations
 
-import pytest
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from document_process.models import (
     BoundingBox,
@@ -31,6 +34,8 @@ from document_process.models import (
 )
 from document_process.services import (
     AssociationService,
+    OCRService,
+    PageContext,
     ReadingOrderService,
     _best_region_match,
     _compute_crop_box,
@@ -661,10 +666,6 @@ class TestAssociationService:
 
 def test_ocr_extract_calls_on_page_done_once_per_page():
     """on_page_done must be called exactly once per page processed."""
-    import tempfile
-    from pathlib import Path
-    from document_process.services import OCRService, PageContext
-
     with tempfile.TemporaryDirectory() as d:
         paths = []
         for i in range(2):

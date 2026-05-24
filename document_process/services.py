@@ -5,11 +5,12 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # ── PaddlePaddle 3.3.x stability patches ─────────────────────────────────────
 # PaddlePaddle 3.3.x on x86 CPU crashes during inference via its PIR executor.
