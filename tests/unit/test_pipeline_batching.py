@@ -4,6 +4,7 @@ regardless of batch size, using mocked services.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -259,7 +260,6 @@ def test_batch_progress_logged(
     mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path, caplog
 ):
     """A progress log line must be emitted at INFO for each batch."""
-    import logging
     mock_export.return_value = tmp_path / "processed" / "document.json"
     (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
     mock_build_doc.return_value = (MagicMock(), MagicMock())
