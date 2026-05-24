@@ -116,8 +116,9 @@ jobs:
             | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
           docker pull ${{ secrets.ECR_REPOSITORY_URI }}:latest || true
-          docker build \
+          DOCKER_BUILDKIT=1 docker build \
             --cache-from ${{ secrets.ECR_REPOSITORY_URI }}:latest \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
             -t ${{ secrets.ECR_REPOSITORY_URI }}:${{ github.sha }} \
             -t ${{ secrets.ECR_REPOSITORY_URI }}:latest \
             .
