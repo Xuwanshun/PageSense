@@ -112,9 +112,5 @@ def test_default_page_batch_size():
 
 def test_page_batch_size_from_env(monkeypatch):
     monkeypatch.setenv("PREPROCESS_PAGE_BATCH_SIZE", "10")
-    from importlib import reload
-    import config
-    reload(config)
-    from config import Settings
     s = Settings(openai_api_key="fake")
     assert s.preprocess_page_batch_size == 10
