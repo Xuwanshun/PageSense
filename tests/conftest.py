@@ -30,6 +30,9 @@ def tmp_settings(tmp_path):
     A Settings instance pointing all data directories at a temporary
     directory that is automatically cleaned up after the test.
 
+    Also callable as a factory to create a fresh Settings with overrides:
+        settings = tmp_settings(preprocess_page_batch_size=2)
+
     WHY we need this:
     The original Settings.__post_init__ created directories immediately,
     meaning tests would write to the real data/ directory. Now Settings
@@ -39,7 +42,7 @@ def tmp_settings(tmp_path):
     tmp_path is a built-in pytest fixture that gives you a unique
     temporary directory for each test (automatically deleted when done).
     """
-    return Settings(
+    _base_kwargs = dict(
         raw_documents_dir=tmp_path / "raw",
         processed_documents_dir=tmp_path / "processed",
         vectorstore_dir=tmp_path / "embedded",
@@ -51,3 +54,12 @@ def tmp_settings(tmp_path):
         jwt_secret_key="test-secret-key-for-unit-tests",
         database_url=f"sqlite:///{tmp_path}/auth.db",
     )
+
+    class _CallableSettings(Settings):
+        """Settings subclass that is also callable so tests can do tmp_settings(override=val)."""
+
+        def __call__(self, **kwargs):
+            merged = {**_base_kwargs, **kwargs}
+            return Settings(**merged)
+
+    return _CallableSettings(**_base_kwargs)
