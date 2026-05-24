@@ -642,3 +642,17 @@ class TestAssociationService:
         block_for_i1 = next(b for b in blocks if "i1" in b.item_ids)
         block_for_i2 = next(b for b in blocks if "i2" in b.item_ids)
         assert block_for_i1.block_id != block_for_i2.block_id
+
+    def test_associate_start_index_offsets_block_ids(self):
+        """When start_index=5 the first block id must be 'p1_block_5' not 'p1_block_1'."""
+        item = _item("i1", "hello", _bbox(0, 0, 100, 20))
+        page = _ocr_page(1, [item])
+        reading_order = {
+            "resolver": "ocr_bbox_sort_v1",
+            "document_order_item_ids": ["i1"],
+            "pages": [{"page_number": 1, "ordered_item_ids": ["i1"]}],
+        }
+        region = _region("r1", "text_block", _bbox(0, 0, 100, 100))
+        svc = AssociationService()
+        _, blocks, _ = svc.associate([page], reading_order, [region], start_index=5)
+        assert blocks[0].block_id == "p1_block_5"

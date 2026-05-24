@@ -315,6 +315,8 @@ class AssociationService:
         ocr_pages: list[OCRPageResult],
         reading_order: dict[str, Any],
         regions: list[LayoutRegion],
+        *,
+        start_index: int = 1,
     ) -> tuple[list[RegionAssociation], list[OrderedTextBlock], dict[str, Any]]:
         item_lookup = {item.item_id: item for page in ocr_pages for item in page.items}
         regions_by_page: dict[int, list[LayoutRegion]] = {}
@@ -327,7 +329,7 @@ class AssociationService:
         associations: list[RegionAssociation] = []
         ordered_blocks: list[OrderedTextBlock] = []
         page_payloads: list[dict[str, Any]] = []
-        global_index = 1
+        global_index = start_index
 
         for page_entry in reading_order.get("pages", []):
             page_number = int(page_entry["page_number"])
