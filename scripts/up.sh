@@ -67,7 +67,7 @@ echo "Scaling up ECS: cluster=$CLUSTER service=$SERVICE"
 aws ecs update-service \
   --cluster "$CLUSTER" \
   --service "$SERVICE" \
-  --desired-count 2 \
+  --desired-count 1 \
   --region "$REGION" \
   --output text --query "service.desiredCount"
 
