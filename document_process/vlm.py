@@ -156,7 +156,7 @@ def _describe_crop(
     """
     if settings.vlm_base_url:
         try:
-            return _call_vlm(
+            result = _call_vlm(
                 crop_path=crop_path,
                 region_type=region_type,
                 context_text=context_text,
@@ -167,12 +167,16 @@ def _describe_crop(
                 # first request in a session doesn't immediately fall back to GPT-4o.
                 timeout=300.0,
             )
+            logger.info("VLM backend used: %s", settings.vlm_self_hosted_model)
+            return result
         except Exception as exc:
             logger.warning(
                 "Self-hosted VLM unavailable (%s) — falling back to %s",
                 exc,
                 settings.vlm_model,
             )
+
+    logger.info("VLM backend used: %s", settings.vlm_model)
 
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for VLM summaries.")
