@@ -21,9 +21,13 @@ from pathlib import Path
 from config import Settings, ensure_data_dirs
 
 
-def test_settings_defaults():
+def test_settings_defaults(monkeypatch):
     """Default values are set correctly when no env vars override them."""
-    s = Settings(openai_api_key=None)
+    for key in ("OPENAI_MODEL", "LOG_LEVEL", "EMBEDDING_MODEL", "APP_MODE",
+                "S3_BUCKET_NAME", "RAW_DOCUMENTS_DIR", "PROCESSED_DOCUMENTS_DIR",
+                "VECTORSTORE_DIR", "PADDLE_CACHE_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings(openai_api_key=None, _env_file=None)
     assert s.raw_documents_dir == Path("data/raw")
     assert s.processed_documents_dir == Path("data/processed")
     assert s.vectorstore_dir == Path("data/embedded")
