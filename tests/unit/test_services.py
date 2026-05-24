@@ -669,14 +669,11 @@ def test_ocr_extract_calls_on_page_done_once_per_page():
     with tempfile.TemporaryDirectory() as d:
         paths = []
         for i in range(2):
-            p = Path(d) / f"page_{i+1}.png"
+            p = Path(d) / f"page_{i + 1}.png"
             p.write_bytes(b"fake")
             paths.append(p)
 
-        pages = [
-            PageContext(page_number=i+1, width=100.0, height=200.0, page_image_path=paths[i])
-            for i in range(2)
-        ]
+        pages = [PageContext(page_number=i + 1, width=100.0, height=200.0, page_image_path=paths[i]) for i in range(2)]
 
         svc = OCRService()
         fake_result = MagicMock()

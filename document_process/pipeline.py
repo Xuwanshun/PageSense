@@ -103,7 +103,10 @@ class DocumentPreprocessingPipeline:
             last_page = batch[-1].page_number
             logger.info(
                 "Batch %d/%d: pages %d-%d",
-                batch_num, total_batches, first_page, last_page,
+                batch_num,
+                total_batches,
+                first_page,
+                last_page,
             )
 
             ocr_batch, ocr_issues = self.ocr.extract(batch, on_page_done=_on_page_done)
@@ -137,9 +140,7 @@ class DocumentPreprocessingPipeline:
         }
         ordered_text = {
             "pages": merged_ordered_text_pages,
-            "full_text": "\n\n".join(
-                p["text"] for p in merged_ordered_text_pages if p.get("text")
-            ).strip(),
+            "full_text": "\n\n".join(p["text"] for p in merged_ordered_text_pages if p.get("text")).strip(),
         }
 
         cropped_assets, crop_issues = self.cropping.crop_visual_regions(

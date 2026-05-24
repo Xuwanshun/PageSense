@@ -53,7 +53,9 @@ def _run_pipeline(
                 jobs[document_id]["pages_done"] = pages_done
                 jobs[document_id]["total_pages"] = total_pages
 
-            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id, on_progress=_on_progress)
+            result = preprocess_document(
+                dest, settings=settings, force=True, document_id=document_id, on_progress=_on_progress
+            )
             jobs[document_id]["status"] = "indexing"
             index_all_processed_documents(settings=settings)
             jobs[document_id].update(

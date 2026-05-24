@@ -2,6 +2,7 @@
 Tests that DocumentPreprocessingPipeline produces identical results
 regardless of batch size, using mocked services.
 """
+
 from __future__ import annotations
 
 import logging
@@ -83,27 +84,34 @@ def _build_pipeline(settings, tmp_path, num_pages: int):
     loader_mock.load.return_value = loaded
 
     ocr_mock = MagicMock()
+
     def ocr_extract(batch_pages, *, on_page_done=None):
         nums = [p.page_number for p in batch_pages]
         if on_page_done is not None:
             for _ in batch_pages:
                 on_page_done()
         return [o for o in ocr_pages if o.page_number in nums], []
+
     ocr_mock.extract.side_effect = ocr_extract
 
     reading_order_mock = MagicMock()
+
     def ro_resolve(batch_ocr):
         nums = [o.page_number for o in batch_ocr]
         return _reading_order_for_pages(nums), []
+
     reading_order_mock.resolve.side_effect = ro_resolve
 
     layout_mock = MagicMock()
+
     def layout_detect(batch_pages, batch_ocr):
         nums = [p.page_number for p in batch_pages]
         return [r for r in regions if r.page_number in nums], [], "PP-DocLayout_plus-L"
+
     layout_mock.detect.side_effect = layout_detect
 
     assoc_mock = MagicMock()
+
     def association_associate(batch_ocr, batch_ro, batch_regions, *, start_index=1):
         nums = [o.page_number for o in batch_ocr]
         blocks = [_make_block(start_index + i, f"p{n}_ocr_1") for i, n in enumerate(nums)]
@@ -123,6 +131,7 @@ def _build_pipeline(settings, tmp_path, num_pages: int):
             "full_text": " ".join(f"text{n}" for n in nums),
         }
         return assocs, blocks, ordered_text
+
     assoc_mock.associate.side_effect = association_associate
 
     crop_mock = MagicMock()
@@ -144,9 +153,7 @@ def _build_pipeline(settings, tmp_path, num_pages: int):
 @patch("document_process.pipeline.build_visual_summaries", return_value=[])
 @patch("document_process.pipeline.build_document_artifacts")
 @patch("document_process.pipeline.export_artifacts")
-def test_batching_calls_ocr_per_batch(
-    mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path
-):
+def test_batching_calls_ocr_per_batch(mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path):
     """OCR must be called once per batch, not once for all pages."""
     mock_export.return_value = tmp_path / "processed" / "document.json"
     (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
@@ -164,17 +171,17 @@ def test_batching_calls_ocr_per_batch(
 @patch("document_process.pipeline.build_visual_summaries", return_value=[])
 @patch("document_process.pipeline.build_document_artifacts")
 @patch("document_process.pipeline.export_artifacts")
-def test_batching_accumulates_all_regions(
-    mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path
-):
+def test_batching_accumulates_all_regions(mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path):
     """All regions from all batches must reach build_document_artifacts."""
     mock_export.return_value = tmp_path / "processed" / "document.json"
     (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
 
     captured = {}
+
     def capture_build_doc(**kwargs):
         captured["regions"] = kwargs.get("regions", [])
         return MagicMock(), MagicMock()
+
     mock_build_doc.side_effect = capture_build_doc
 
     settings = tmp_settings(preprocess_page_batch_size=2)
@@ -188,17 +195,17 @@ def test_batching_accumulates_all_regions(
 @patch("document_process.pipeline.build_visual_summaries", return_value=[])
 @patch("document_process.pipeline.build_document_artifacts")
 @patch("document_process.pipeline.export_artifacts")
-def test_reading_order_merges_all_pages(
-    mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path
-):
+def test_reading_order_merges_all_pages(mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path):
     """Merged reading order must contain item IDs from all pages."""
     mock_export.return_value = tmp_path / "processed" / "document.json"
     (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
 
     captured = {}
+
     def capture_export(**kwargs):
         captured["reading_order"] = kwargs.get("reading_order", {})
         return tmp_path / "processed" / "document.json"
+
     mock_export.side_effect = capture_export
     mock_build_doc.return_value = (MagicMock(), MagicMock())
 
@@ -229,8 +236,8 @@ def test_association_start_index_increments_across_batches(
 
     calls = pipeline.association.associate.call_args_list
     assert calls[0].kwargs["start_index"] == 1
-    assert calls[1].kwargs["start_index"] == 3   # 1 + 2 pages in first batch
-    assert calls[2].kwargs["start_index"] == 5   # 3 + 2 pages in second batch
+    assert calls[1].kwargs["start_index"] == 3  # 1 + 2 pages in first batch
+    assert calls[2].kwargs["start_index"] == 5  # 3 + 2 pages in second batch
 
 
 @patch("document_process.pipeline.build_chunks", return_value=[])
@@ -256,9 +263,7 @@ def test_batch_size_larger_than_pages_runs_single_batch(
 @patch("document_process.pipeline.build_visual_summaries", return_value=[])
 @patch("document_process.pipeline.build_document_artifacts")
 @patch("document_process.pipeline.export_artifacts")
-def test_batch_progress_logged(
-    mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path, caplog
-):
+def test_batch_progress_logged(mock_export, mock_build_doc, mock_vis, mock_chunks, tmp_settings, tmp_path, caplog):
     """A progress log line must be emitted at INFO for each batch."""
     mock_export.return_value = tmp_path / "processed" / "document.json"
     (tmp_path / "processed").mkdir(parents=True, exist_ok=True)
