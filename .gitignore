@@ -65,3 +65,15 @@ infra/.terraform/
 # ── Paddle model weights ──────────────────────────────────────────────────────
 paddle_models/
 cdk/cdk.out/
+
+# ── Evaluation: keep schema + smoke fixtures, ignore private gold/predictions/reports ──
+eval/reports/*
+!eval/reports/.gitkeep
+eval/datasets/*
+!eval/datasets/manual_questions.example.yaml
+!eval/datasets/smoke.yaml
+!eval/datasets/smoke_predictions.json
+
+# Eval run artifacts + private source PDFs
+logs/
+test_file/

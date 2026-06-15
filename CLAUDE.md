@@ -12,7 +12,9 @@ pip install -r requirements-dev.txt    # CI/test deps (no Paddle)
 cp .env.example .env                   # then fill in OPENAI_API_KEY
 ```
 
-Required env vars: `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL`.
+Required env vars: `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL`. Default chat model is `gpt-4.1-mini` (`OPENAI_MODEL`); embeddings use `text-embedding-3-small`.
+
+**VLM backend selection** (used by `vlm.py` and `intelligence_service.py`): vision and document-intelligence calls follow a 3-tier fallback chain — self-hosted **Qwen3-VL** vLLM (`QWEN_BASE_URL` / `QWEN_MODEL` / `QWEN_API_KEY`) → **Modal** self-hosted endpoint (`VLM_BASE_URL`) → **OpenAI GPT-4o**. Setting `QWEN_BASE_URL` (e.g. `http://localhost:8001/v1` from `vllm serve <sft-checkpoint>`) routes *both* visual summaries and the document descriptor to the fine-tuned Qwen3-VL-4B instead of OpenAI. All config is read via `Settings`; never call `os.getenv()`.
 
 ## Common Commands
 
@@ -44,8 +46,8 @@ modal deploy scripts/modal_vlm.py      # deploy to Modal, prints endpoint URL
 modal app stop qwen3-vl-rag            # tear down when idle
 
 # ECS scaling
-./scripts/up.sh                        # scale ECS service to 2 containers
-./scripts/down.sh                      # scale ECS service to 0 (free when idle)
+./scripts/up.sh                        # start RDS (if stopped) + scale ECS service to 1 container
+./scripts/down.sh                      # scale ECS service to 0 + stop RDS (ALB keeps running ~$16-20/mo; data preserved)
 ```
 
 ## Architecture
@@ -60,9 +62,9 @@ Two entry points share the same core pipeline:
 1. **`document_process/`** — PDF → frozen artifacts
    - `pipeline.py`: orchestrates `DocumentPreprocessingPipeline`
    - Services chain: `DocumentLoaderService` → `OCRService` (PaddleOCR) → `ReadingOrderService` → `LayoutDetectionService` (PP-DocLayout_plus-L) → `AssociationService` → `CroppingService`
-   - `intelligence_service.py`: optional title propagation, section grouping, document descriptor (opt-in via `USE_DOCUMENT_INTELLIGENCE=true`)
+   - `intelligence_service.py`: optional title propagation, section grouping, document descriptor (opt-in via `USE_DOCUMENT_INTELLIGENCE=true`). Visual-reading and descriptor LLM calls honor the same Qwen→OpenAI routing as `vlm.py`.
    - Outputs `document.json`, `chunks.json`, and cropped region images into `data/processed/<document_id>/`
-   - Optional: `vlm.py` generates `visual_summaries.json` with GPT-4o descriptions for tables/figures (opt-in via `USE_VLM_SUMMARIES=true`). When `VLM_BASE_URL` is set, tries the self-hosted Modal/Qwen3-VL endpoint first and falls back to GPT-4o on any error.
+   - Optional: `vlm.py` generates `visual_summaries.json` with VLM descriptions for tables/figures (opt-in via `USE_VLM_SUMMARIES=true`). Backend follows the fallback chain `QWEN_BASE_URL` (Qwen3-VL vLLM) → `VLM_BASE_URL` (Modal) → GPT-4o, falling back on any error.
 
 2. **`rag/`** — frozen artifacts → vector index → answers
    - `chunk.py`: converts `ProcessedChunk` → `ChunkRecord` (flat, embeddable)
@@ -84,6 +86,7 @@ Two entry points share the same core pipeline:
    - `routers/conversations.py`: conversation history (`GET/POST /conversations`)
    - On startup: syncs artifacts from S3 if `S3_BUCKET_NAME` is set (ECS stateless pattern)
    - Serves static frontend from `api/static/`
+   - Async preprocess/index jobs are tracked in an in-memory dict, but each job's state is also mirrored to `data/processed/<document_id>/_job_status.json` (`_write_job_status` in `routers/documents.py`) so progress survives ECS task restarts. Because the dict is per-container, the ECS service runs **a single task** (`up.sh` desired-count 1) with ALB sticky sessions, so upload and status-poll always hit the same container.
 
 4. **`db/`** — database layer
    - `models.py`: SQLAlchemy models for users and conversations (PostgreSQL on AWS, SQLite locally)
@@ -120,6 +123,7 @@ cdk deploy --all  # deploy all stacks
 - Paddle-dependent tests must be guarded: `@pytest.mark.skipif(not os.getenv("PADDLE_AVAILABLE"), reason="paddle not installed")` — Paddle is not in `requirements-dev.txt` and is excluded from CI
 - `asyncio_mode = "auto"` is set in `pyproject.toml` so async test functions work without extra decorators
 - FastAPI tests use `httpx` via the `TestClient` from `create_app(settings)`
+- `tests/performance_test.py` is a standalone end-to-end load/timing script against a live deployment (scales ECS to 1, uploads, polls status) — it is not a pytest unit test and is not run in CI
 
 ## CI/CD
 
@@ -131,5 +135,8 @@ All required AWS secrets are stored in Secrets Manager and sourced from CDK stac
 
 ## Key Tags
 
-- `v-pre-qwen`: last clean main before any Qwen3-VL integration
-- `v-with-qwen`: full Qwen3-VL + Modal integration + all deploy fixes
+- `v1.0.0`: original demo UI
+- `v2.0.0`: improvements (PR #3)
+- `v3.0.0`: `doc_filter` parameter added to `answer_question_from_frozen_artifacts`
+
+Qwen3-VL routing and Modal integration landed after `v3.0.0` directly on `main` (see commits `db883c6`…`a482e0c`).

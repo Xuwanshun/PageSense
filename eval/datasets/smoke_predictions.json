@@ -1,0 +1,35 @@
+{
+  "run": {
+    "timestamp": "20260101T000000Z",
+    "top_k": 5,
+    "note": "Synthetic fixture for offline CI. Not produced by a live run."
+  },
+  "predictions": [
+    {
+      "id": "s1",
+      "question": "What torque for the base bolts?",
+      "answer": "Torque the base bolts to 50 Nm.",
+      "sources": [
+        {"chunk_id": "c1", "source_filename": "manual_a.pdf", "page_number": 10, "score": 0.91},
+        {"chunk_id": "c2", "source_filename": "manual_b.pdf", "page_number": 99, "score": 0.40}
+      ],
+      "latency_ms": 100.0
+    },
+    {
+      "id": "s2",
+      "question": "Recommend a re-greasing interval.",
+      "answer": "Re-grease the joint every 500 hours (see page 20).",
+      "sources": [
+        {"chunk_id": "c3", "source_filename": "manual_a.pdf", "page_number": 20, "score": 0.82}
+      ],
+      "latency_ms": 120.0
+    },
+    {
+      "id": "s3",
+      "question": "What is the stock ticker?",
+      "answer": "I cannot answer from the provided context.",
+      "sources": [],
+      "latency_ms": 80.0
+    }
+  ]
+}

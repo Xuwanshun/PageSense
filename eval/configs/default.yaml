@@ -1,0 +1,7 @@
+# Default evaluation configuration. See eval/_common.py:EvalConfig.
+top_k: 5                 # sources the QA pipeline returns per question
+ks: [1, 3, 5]           # k values for Recall@k and nDCG@k
+page_window: 1          # page-tolerant citation matching (±1 page)
+citation_top_n: 2       # treat the top-N sources as the answer's citations
+judge_model: gpt-4o     # stronger than the generator (gpt-4.1-mini) to cut self-bias; live only
+usd_per_1k_tokens: 0.005  # rough price for the approximate cost estimate

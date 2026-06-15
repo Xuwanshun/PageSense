@@ -1,0 +1,32 @@
+# Tiny synthetic gold set for the CI smoke test. Not real manual content.
+# Paired with smoke_predictions.json so metrics can be checked fully offline.
+version: 1
+questions:
+  - id: s1
+    type: factual
+    question: "What torque for the base bolts?"
+    expected:
+      sources:
+        - source: "manual_a.pdf"
+          pages: [10]
+          relevance: 3
+      must_include: ["50 Nm"]
+      must_not_include: ["lubricate"]
+      reference_answer: "Torque to 50 Nm."
+  - id: s2
+    type: suggestion
+    question: "Recommend a re-greasing interval."
+    expected:
+      sources:
+        - source: "manual_a.pdf"
+          pages: [20]
+          relevance: 2
+      must_include: ["every 500 hours"]
+      requires_citation: true
+      reference_answer: "Re-grease every 500 hours."
+  - id: s3
+    type: no_answer
+    question: "What is the stock ticker?"
+    expected:
+      no_answer: true
+      must_include: ["cannot answer"]

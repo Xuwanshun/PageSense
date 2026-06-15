@@ -1,0 +1,29 @@
+# Feature-flag ablation variants for eval/runners/ablation_eval.py.
+# Each variant overrides Settings flags; everything unset keeps its default.
+# Goal: see which retrieval/answer features actually move the metrics so you
+# can drop the ones that don't when lightening the system.
+variants:
+  baseline:
+    use_query_enhancement: false
+    use_hybrid_retrieval: false
+    use_llm_reranker: false
+    use_context_compression: false
+    use_faithfulness_check: false
+  query_enhancement:
+    use_query_enhancement: true
+    use_hybrid_retrieval: false
+    use_llm_reranker: false
+  hybrid:
+    use_query_enhancement: false
+    use_hybrid_retrieval: true
+    use_llm_reranker: false
+  reranker:
+    use_query_enhancement: false
+    use_hybrid_retrieval: false
+    use_llm_reranker: true
+  full:
+    use_query_enhancement: true
+    use_hybrid_retrieval: true
+    use_llm_reranker: true
+    use_context_compression: true
+    use_faithfulness_check: true

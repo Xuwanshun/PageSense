@@ -1,0 +1,72 @@
+# Example gold dataset schema for manual / operation-handbook RAG eval.
+#
+# Copy this to manual_questions.yaml and fill in real questions. Your real
+# gold file and any predictions are gitignored (see .gitignore) — never commit
+# private manuals or a private gold set. Only this .example and the smoke
+# fixtures are tracked.
+#
+# Schema (validated by eval/_common.py):
+#   id            unique string id
+#   type          factual | procedure | suggestion | no_answer
+#   question      the user question
+#   expected:
+#     sources:    graded gold citations (used for Recall@k / nDCG / citation P/R)
+#       - source      file name as it appears in the corpus (e.g. UR5_handbook.pdf)
+#         pages       acceptable page numbers; empty = match the file alone
+#         sections    optional section labels (matched only if predictions carry them)
+#         relevance   graded relevance 0-3 (3 = primary evidence)
+#     must_include      substrings the answer MUST contain (case-insensitive)
+#     must_not_include  substrings the answer MUST NOT contain
+#     reference_answer  gold answer text (used by the LLM judge, live only)
+#     no_answer         true when the system should refuse / say it cannot answer
+#     requires_citation suggestion must be backed by a cited source
+#     actionable        label for the judge: is the recommendation expected actionable
+
+version: 1
+questions:
+  - id: q001
+    type: factual
+    question: "What is the tightening torque for the UR5 base mounting bolts?"
+    expected:
+      sources:
+        - source: "UR5_handbook.pdf"
+          pages: [42, 43]
+          sections: ["3.2 Mounting"]
+          relevance: 3
+      must_include: ["50 Nm"]
+      must_not_include: ["lubricate"]
+      reference_answer: "Tighten the four base mounting bolts to 50 Nm."
+
+  - id: q002
+    type: procedure
+    question: "How do you perform the initial robot power-on safety check?"
+    expected:
+      sources:
+        - source: "UR5_handbook.pdf"
+          pages: [15]
+          relevance: 3
+        - source: "UR5_handbook.pdf"
+          pages: [16]
+          relevance: 1
+      must_include: ["emergency stop"]
+      reference_answer: "Verify the emergency stop, then power on and confirm the safety I/O."
+
+  - id: q003
+    type: suggestion
+    question: "Recommend a re-greasing interval for the gripper joint."
+    expected:
+      sources:
+        - source: "UR5_handbook.pdf"
+          pages: [88]
+          relevance: 3
+      must_include: ["500 hours"]
+      requires_citation: true
+      actionable: true
+      reference_answer: "Re-grease the gripper joint every 500 operating hours."
+
+  - id: q004
+    type: no_answer
+    question: "What is the manufacturer's stock ticker symbol?"
+    expected:
+      no_answer: true
+      must_include: ["cannot answer"]
