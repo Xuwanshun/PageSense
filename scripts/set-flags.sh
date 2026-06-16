@@ -14,7 +14,7 @@
 #   chmod +x scripts/set-flags.sh
 #   ./scripts/set-flags.sh
 #
-# To change the flags, edit the OVERRIDES section below.
+# To change the flags, edit the FLAGS section below.
 # =============================================================================
 
 set -e
@@ -22,19 +22,17 @@ set -e
 REGION="${AWS_REGION:-ca-central-1}"
 
 # ── Edit these to change which flags are on/off ──────────────────────────────
-declare -A OVERRIDES=(
-  # Keep on: big retrieval quality gains, zero or low query latency cost
-  [USE_QUERY_ENHANCEMENT]="true"
-  [USE_HYBRID_RETRIEVAL]="true"
-  [USE_DOCUMENT_INTELLIGENCE]="true"
-  [USE_ADAPTIVE_CHUNKING]="true"
-  [USE_VLM_SUMMARIES]="true"
+# Keep on: big retrieval quality gains, zero or low query latency cost
+FLAG_USE_QUERY_ENHANCEMENT="true"
+FLAG_USE_HYBRID_RETRIEVAL="true"
+FLAG_USE_DOCUMENT_INTELLIGENCE="true"
+FLAG_USE_ADAPTIVE_CHUNKING="true"
+FLAG_USE_VLM_SUMMARIES="true"
 
-  # Turn off: each adds 1-2 sequential LLM API calls per query
-  [USE_LLM_RERANKER]="false"
-  [USE_CONTEXT_COMPRESSION]="false"
-  [USE_FAITHFULNESS_CHECK]="false"
-)
+# Turn off: each adds 1-2 sequential LLM API calls per query
+FLAG_USE_LLM_RERANKER="false"
+FLAG_USE_CONTEXT_COMPRESSION="false"
+FLAG_USE_FAITHFULNESS_CHECK="false"
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "Fetching ECS cluster and service names..."
@@ -67,50 +65,56 @@ aws ecs describe-task-definition \
   --region "$REGION" \
   > /tmp/task-def.json
 
-# Apply each override: update existing env var or append a new one
-PATCHED=/tmp/task-def-patched.json
-cp /tmp/task-def.json "$PATCHED"
-
-for KEY in "${!OVERRIDES[@]}"; do
-  VALUE="${OVERRIDES[$KEY]}"
-  echo "  Setting $KEY=$VALUE"
-
-  # If the key already exists, replace its value; otherwise append it
-  if python3 -c "
-import json, sys
-data = json.load(open('$PATCHED'))
-env = data['containerDefinitions'][0]['environment']
-found = False
-for e in env:
-    if e['name'] == '$KEY':
-        e['value'] = '$VALUE'
-        found = True
-        break
-if not found:
-    env.append({'name': '$KEY', 'value': '$VALUE'})
-json.dump(data, open('$PATCHED', 'w'), indent=2)
-"; then
-    : # success
-  else
-    echo "ERROR: failed to patch $KEY"
-    exit 1
-  fi
-done
-
-# Strip fields that must not be present when registering a new revision
-REGISTER_JSON=$(python3 -c "
+# Apply all flag overrides and strip registration-only fields in one Python pass
+python3 - <<'PYEOF'
 import json
-data = json.load(open('$PATCHED'))
-for field in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes',
-              'compatibilities', 'registeredAt', 'registeredBy', 'deregisteredAt']:
+
+flags = {
+    "USE_QUERY_ENHANCEMENT":   "__FLAG_USE_QUERY_ENHANCEMENT__",
+    "USE_HYBRID_RETRIEVAL":    "__FLAG_USE_HYBRID_RETRIEVAL__",
+    "USE_DOCUMENT_INTELLIGENCE": "__FLAG_USE_DOCUMENT_INTELLIGENCE__",
+    "USE_ADAPTIVE_CHUNKING":   "__FLAG_USE_ADAPTIVE_CHUNKING__",
+    "USE_VLM_SUMMARIES":       "__FLAG_USE_VLM_SUMMARIES__",
+    "USE_LLM_RERANKER":        "__FLAG_USE_LLM_RERANKER__",
+    "USE_CONTEXT_COMPRESSION": "__FLAG_USE_CONTEXT_COMPRESSION__",
+    "USE_FAITHFULNESS_CHECK":  "__FLAG_USE_FAITHFULNESS_CHECK__",
+}
+
+data = json.load(open("/tmp/task-def.json"))
+env = data["containerDefinitions"][0]["environment"]
+
+for key, value in flags.items():
+    for e in env:
+        if e["name"] == key:
+            e["value"] = value
+            break
+    else:
+        env.append({"name": key, "value": value})
+
+for field in ["taskDefinitionArn", "revision", "status", "requiresAttributes",
+              "compatibilities", "registeredAt", "registeredBy", "deregisteredAt"]:
     data.pop(field, None)
-print(json.dumps(data, indent=2))
-")
+
+json.dump(data, open("/tmp/task-def-patched.json", "w"), indent=2)
+print("Flags patched.")
+PYEOF
+
+# Substitute actual shell variable values into the patched JSON
+sed -i '' \
+  -e "s/__FLAG_USE_QUERY_ENHANCEMENT__/$FLAG_USE_QUERY_ENHANCEMENT/g" \
+  -e "s/__FLAG_USE_HYBRID_RETRIEVAL__/$FLAG_USE_HYBRID_RETRIEVAL/g" \
+  -e "s/__FLAG_USE_DOCUMENT_INTELLIGENCE__/$FLAG_USE_DOCUMENT_INTELLIGENCE/g" \
+  -e "s/__FLAG_USE_ADAPTIVE_CHUNKING__/$FLAG_USE_ADAPTIVE_CHUNKING/g" \
+  -e "s/__FLAG_USE_VLM_SUMMARIES__/$FLAG_USE_VLM_SUMMARIES/g" \
+  -e "s/__FLAG_USE_LLM_RERANKER__/$FLAG_USE_LLM_RERANKER/g" \
+  -e "s/__FLAG_USE_CONTEXT_COMPRESSION__/$FLAG_USE_CONTEXT_COMPRESSION/g" \
+  -e "s/__FLAG_USE_FAITHFULNESS_CHECK__/$FLAG_USE_FAITHFULNESS_CHECK/g" \
+  /tmp/task-def-patched.json
 
 echo ""
 echo "Registering new task definition revision..."
-NEW_ARN=$(echo "$REGISTER_JSON" | aws ecs register-task-definition \
-  --cli-input-json file:///dev/stdin \
+NEW_ARN=$(aws ecs register-task-definition \
+  --cli-input-json file:///tmp/task-def-patched.json \
   --query "taskDefinition.taskDefinitionArn" \
   --output text --region "$REGION")
 
@@ -128,10 +132,15 @@ aws ecs update-service \
 
 echo ""
 echo "Done. New containers rolling out (~2-3 min)."
-echo "Current flags applied:"
-for KEY in "${!OVERRIDES[@]}"; do
-  echo "  $KEY=${OVERRIDES[$KEY]}"
-done
+echo "Flags applied:"
+echo "  USE_QUERY_ENHANCEMENT=$FLAG_USE_QUERY_ENHANCEMENT"
+echo "  USE_HYBRID_RETRIEVAL=$FLAG_USE_HYBRID_RETRIEVAL"
+echo "  USE_DOCUMENT_INTELLIGENCE=$FLAG_USE_DOCUMENT_INTELLIGENCE"
+echo "  USE_ADAPTIVE_CHUNKING=$FLAG_USE_ADAPTIVE_CHUNKING"
+echo "  USE_VLM_SUMMARIES=$FLAG_USE_VLM_SUMMARIES"
+echo "  USE_LLM_RERANKER=$FLAG_USE_LLM_RERANKER"
+echo "  USE_CONTEXT_COMPRESSION=$FLAG_USE_CONTEXT_COMPRESSION"
+echo "  USE_FAITHFULNESS_CHECK=$FLAG_USE_FAITHFULNESS_CHECK"
 echo ""
 echo "Watch rollout:"
 echo "  aws ecs describe-services --cluster $CLUSTER --services $SERVICE --region $REGION --query 'services[0].{running:runningCount,pending:pendingCount,desired:desiredCount}'"
