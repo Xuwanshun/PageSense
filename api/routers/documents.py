@@ -231,8 +231,10 @@ async def list_documents(request: Request, user: dict = Depends(get_current_user
     documents = []
     seen: set[str] = set()
 
-    # In-progress and recently finished jobs (from memory)
+    # In-progress and recently finished jobs (from memory) — filter to this user only
     for document_id, job in jobs.items():
+        if job.get("user_id") and job["user_id"] != user["id"]:
+            continue
         seen.add(document_id)
         documents.append(
             {
@@ -319,6 +321,7 @@ async def upload(request: Request, file: UploadFile, user: dict = Depends(get_cu
         "chunk_count": None,
         "page_count": None,
         "source_filename": file.filename,
+        "user_id": user["id"],
     }
     logger.info("Starting pipeline for document_id=%s", document_id)
 
