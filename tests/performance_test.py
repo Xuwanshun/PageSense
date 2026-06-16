@@ -36,7 +36,7 @@ REPORT_PATH = Path(__file__).parent.parent / "performance_report.md"
 TEST_EMAIL = "perf-test@rag-benchmark.local"
 TEST_PASSWORD = "PerfTest2024!"
 
-POLL_INTERVAL = 20   # seconds between status polls
+POLL_INTERVAL = 20  # seconds between status polls
 POLL_TIMEOUT = 3600  # max per document
 MAX_TRANSIENT_ERRORS = 30  # ~10 minutes of consecutive errors before giving up
 
@@ -158,15 +158,24 @@ def ensure_single_task() -> None:
     log("Ensuring single ECS task (prevents multi-task routing issues) ...")
     result = subprocess.run(
         [
-            "aws", "ecs", "update-service",
-            "--cluster", ECS_CLUSTER,
-            "--service", ECS_SERVICE,
-            "--desired-count", "1",
-            "--region", ECS_REGION,
-            "--output", "text",
-            "--query", "service.desiredCount",
+            "aws",
+            "ecs",
+            "update-service",
+            "--cluster",
+            ECS_CLUSTER,
+            "--service",
+            ECS_SERVICE,
+            "--desired-count",
+            "1",
+            "--region",
+            ECS_REGION,
+            "--output",
+            "text",
+            "--query",
+            "service.desiredCount",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode == 0:
         log(f"ECS desired count set to {result.stdout.strip()}")
@@ -233,7 +242,9 @@ def upload_and_wait(session: AuthSession, pdf_path: Path) -> dict:
         # Transient server errors during heavy OCR (403 can appear from stale ALB routes)
         if sr.status_code in (403, 502, 503, 504):
             consec_errors += 1
-            log(f"  [{pdf_path.name}] HTTP {sr.status_code} (server under load) — retry {consec_errors}/{MAX_TRANSIENT_ERRORS}")
+            log(
+                f"  [{pdf_path.name}] HTTP {sr.status_code} (server under load) — retry {consec_errors}/{MAX_TRANSIENT_ERRORS}"
+            )
             if consec_errors > MAX_TRANSIENT_ERRORS:
                 sr.raise_for_status()
             continue
@@ -513,15 +524,17 @@ def main() -> None:
             stats = upload_and_wait(session, pdf)
         except Exception as exc:
             log(f"  SKIPPING {pdf.name} after unrecoverable error: {exc}")
-            doc_stats.append({
-                "document_id": pdf.stem,
-                "filename": pdf.name,
-                "size_mb": pdf.stat().st_size / 1_048_576,
-                "pages": "ERR",
-                "chunks": "ERR",
-                "preprocess_time_s": 0,
-                "error": str(exc),
-            })
+            doc_stats.append(
+                {
+                    "document_id": pdf.stem,
+                    "filename": pdf.name,
+                    "size_mb": pdf.stat().st_size / 1_048_576,
+                    "pages": "ERR",
+                    "chunks": "ERR",
+                    "preprocess_time_s": 0,
+                    "error": str(exc),
+                }
+            )
             # Wait for any task restart to settle before next upload
             log("  Waiting 60s for service to stabilise ...")
             time.sleep(60)
@@ -539,7 +552,9 @@ def main() -> None:
     if ir.status_code == 200:
         idx_data = ir.json()
         idx_data["build_time_s"] = round(time.time() - idx_start, 1)
-        log(f"Index: {idx_data['indexed_documents']} docs, {idx_data['total_chunks']} chunks, {idx_data['build_time_s']}s")
+        log(
+            f"Index: {idx_data['indexed_documents']} docs, {idx_data['total_chunks']} chunks, {idx_data['build_time_s']}s"
+        )
     else:
         log(f"Index build returned {ir.status_code} — using per-upload index.")
         idx_data = {

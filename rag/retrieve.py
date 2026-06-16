@@ -170,9 +170,7 @@ class WeaviateVectorStore:
             import weaviate  # type: ignore
             import weaviate.classes as wvc  # type: ignore
         except ImportError as exc:
-            raise RuntimeError(
-                "weaviate-client is not installed. Run: pip install weaviate-client"
-            ) from exc
+            raise RuntimeError("weaviate-client is not installed. Run: pip install weaviate-client") from exc
 
         self._wvc = wvc
 
@@ -235,9 +233,7 @@ class WeaviateVectorStore:
             )
         self._collection.data.insert_many(objects)
 
-    def query(
-        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]:
+    def query(self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         import json as _json
 
         wvc = self._wvc
@@ -261,9 +257,7 @@ class WeaviateVectorStore:
             for obj in response.objects
         ]
 
-    def bm25_query(
-        self, query: str, top_k: int, *, doc_filter: list[str] | None = None
-    ) -> list[RetrievedChunk]:
+    def bm25_query(self, query: str, top_k: int, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
         import json as _json
 
         wvc = self._wvc
@@ -493,9 +487,7 @@ class DocumentRetriever:
 
         if isinstance(self.vector_store, WeaviateVectorStore):
             # Weaviate handles BM25 + dense + RRF in a single indexed query.
-            fused = self.vector_store.hybrid_query(
-                question, query_embedding, fetch_k, doc_filter=doc_filter or None
-            )
+            fused = self.vector_store.hybrid_query(question, query_embedding, fetch_k, doc_filter=doc_filter or None)
         else:
             # Fallback: manual BM25 + dense + Python-side RRF for JsonVectorStore.
             dense_results = self.vector_store.query(query_embedding, fetch_k, doc_filter=doc_filter or None)

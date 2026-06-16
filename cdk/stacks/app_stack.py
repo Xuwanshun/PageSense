@@ -373,9 +373,7 @@ class AppStack(cdk.Stack):
         # upload (→ task A) and status-poll (→ task B) to hit different
         # containers, resulting in 404s because task B has no in-memory job
         # record for the upload that task A is processing.
-        fargate_service.target_group.enable_cookie_stickiness(
-            cdk.Duration.hours(1)
-        )
+        fargate_service.target_group.enable_cookie_stickiness(cdk.Duration.hours(1))
 
         # Health check: ALB pings /health every 30s.
         # Only sends traffic to containers returning 200. Sick containers
