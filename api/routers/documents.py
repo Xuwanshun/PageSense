@@ -98,7 +98,10 @@ def _run_pipeline(
 
                 try:
                     sync_processed_to_s3(s3_settings)
-                    sync_embedded_to_s3(s3_settings)
+                    # Skip JSON vector store sync when using Weaviate — embeddings
+                    # live in Weaviate Cloud, not in vectorstore_dir.
+                    if not s3_settings.prefer_weaviate:
+                        sync_embedded_to_s3(s3_settings)
                 except Exception as exc:
                     logger.warning("S3 sync after upload pipeline failed: %s", exc)
         except Exception as exc:
