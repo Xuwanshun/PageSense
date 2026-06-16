@@ -586,18 +586,25 @@ def index_all_processed_documents(
     retriever: DocumentRetriever | None = None,
 ) -> dict[str, int]:
     resolved_settings = settings or Settings()
+    owned = retriever is None
     active_retriever = retriever or DocumentRetriever(resolved_settings)
     indexed: dict[str, int] = {}
-    for document_dir in sorted(path for path in resolved_settings.processed_documents_dir.iterdir() if path.is_dir()):
-        document, chunks = load_processed_document_bundle(document_dir)
-        if not chunks:
-            continue
-        document_id = document.document_id if document else document_dir.name
-        indexed[document_id] = active_retriever.index_processed_chunks(
-            chunks,
-            document_id=document_id,
-            source_filename=document.source_filename if document else None,
-        )
+    try:
+        for document_dir in sorted(
+            path for path in resolved_settings.processed_documents_dir.iterdir() if path.is_dir()
+        ):
+            document, chunks = load_processed_document_bundle(document_dir)
+            if not chunks:
+                continue
+            document_id = document.document_id if document else document_dir.name
+            indexed[document_id] = active_retriever.index_processed_chunks(
+                chunks,
+                document_id=document_id,
+                source_filename=document.source_filename if document else None,
+            )
+    finally:
+        if owned:
+            active_retriever.__exit__(None, None, None)
     return indexed
 
 
