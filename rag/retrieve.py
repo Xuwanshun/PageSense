@@ -136,6 +136,246 @@ class JsonVectorStore:
         return result
 
 
+class WeaviateVectorStore:
+    """
+    Weaviate-backed vector store.
+
+    Each logical user corpus is isolated as a separate Weaviate tenant so
+    queries never cross user boundaries.  Embeddings are generated externally
+    (by EmbeddingBackend) and pushed to Weaviate — we do not use Weaviate's
+    built-in vectorizer modules, which lets us keep text-embedding-3-small.
+
+    Collection schema (created on first use):
+      - chunk_id   (TEXT, not-null)   — unique identifier
+      - text       (TEXT)             — chunk content
+      - document_id (TEXT)            — owning document
+      - metadata_json (TEXT)          — full metadata serialized as JSON string
+      - vector     (float[])          — pre-computed OpenAI embedding
+
+    Multi-tenancy:
+      doc_filter is a list of document_id values.  We scope the query to only
+      those documents using a Weaviate where-filter rather than scanning
+      everything and discarding in Python.
+    """
+
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 8080,
+        grpc_port: int = 50051,
+        collection_name: str = "RagChunk",
+        api_key: str | None = None,
+    ) -> None:
+        try:
+            import weaviate  # type: ignore
+            import weaviate.classes as wvc  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "weaviate-client is not installed. Run: pip install weaviate-client"
+            ) from exc
+
+        self._wvc = wvc
+
+        if api_key:
+            # Weaviate Cloud — connect via HTTPS with API key auth.
+            # host is the full cluster URL e.g. "njcuadtkq...weaviate.cloud"
+            self._client = weaviate.connect_to_weaviate_cloud(
+                cluster_url=host,
+                auth_credentials=wvc.init.Auth.api_key(api_key),
+            )
+        else:
+            # Local / self-hosted — anonymous access over plain HTTP.
+            self._client = weaviate.connect_to_local(host=host, port=port, grpc_port=grpc_port)
+
+        self._collection_name = collection_name
+        self._ensure_collection()
+
+    def _ensure_collection(self) -> None:
+        """Create the collection with multi-tenancy if it does not exist."""
+        wvc = self._wvc
+        if not self._client.collections.exists(self._collection_name):
+            self._client.collections.create(
+                name=self._collection_name,
+                multi_tenancy_config=wvc.config.Configure.multi_tenancy(enabled=False),
+                properties=[
+                    wvc.config.Property(name="chunk_id", data_type=wvc.config.DataType.TEXT),
+                    wvc.config.Property(name="text", data_type=wvc.config.DataType.TEXT),
+                    wvc.config.Property(name="document_id", data_type=wvc.config.DataType.TEXT),
+                    wvc.config.Property(name="metadata_json", data_type=wvc.config.DataType.TEXT),
+                ],
+                # No vector_index_config — let Weaviate choose the default for
+                # the deployment type (HNSW for self-hosted, hfresh for Cloud Serverless).
+                inverted_index_config=wvc.config.Configure.inverted_index(
+                    bm25_b=0.75,
+                    bm25_k1=1.5,
+                ),
+            )
+
+    @property
+    def _collection(self):  # type: ignore[return]
+        return self._client.collections.get(self._collection_name)
+
+    def upsert(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
+        import json as _json
+
+        wvc = self._wvc
+        objects = []
+        for chunk, embedding in zip(chunks, embeddings, strict=False):
+            objects.append(
+                wvc.data.DataObject(
+                    properties={
+                        "chunk_id": chunk.chunk_id,
+                        "text": chunk.text,
+                        "document_id": str(chunk.metadata.get("document_id") or ""),
+                        "metadata_json": _json.dumps(chunk.metadata),
+                    },
+                    vector=embedding,
+                    uuid=_uuid_from_chunk_id(chunk.chunk_id),
+                )
+            )
+        self._collection.data.insert_many(objects)
+
+    def query(
+        self, embedding: list[float], top_k: int, *, doc_filter: list[str] | None = None
+    ) -> list[RetrievedChunk]:
+        import json as _json
+
+        wvc = self._wvc
+        filters = None
+        if doc_filter:
+            filters = wvc.query.Filter.by_property("document_id").contains_any(doc_filter)
+
+        response = self._collection.query.near_vector(
+            near_vector=embedding,
+            limit=top_k,
+            filters=filters,
+            return_metadata=wvc.query.MetadataQuery(distance=True),
+        )
+        return [
+            RetrievedChunk(
+                chunk_id=obj.properties["chunk_id"],
+                text=obj.properties.get("text") or "",
+                metadata=_json.loads(obj.properties.get("metadata_json") or "{}"),
+                score=1.0 - (obj.metadata.distance or 0.0),
+            )
+            for obj in response.objects
+        ]
+
+    def bm25_query(
+        self, query: str, top_k: int, *, doc_filter: list[str] | None = None
+    ) -> list[RetrievedChunk]:
+        import json as _json
+
+        wvc = self._wvc
+        filters = None
+        if doc_filter:
+            filters = wvc.query.Filter.by_property("document_id").contains_any(doc_filter)
+
+        response = self._collection.query.bm25(
+            query=query,
+            query_properties=["text"],
+            limit=top_k,
+            filters=filters,
+            return_metadata=wvc.query.MetadataQuery(score=True),
+        )
+        return [
+            RetrievedChunk(
+                chunk_id=obj.properties["chunk_id"],
+                text=obj.properties.get("text") or "",
+                metadata=_json.loads(obj.properties.get("metadata_json") or "{}"),
+                score=obj.metadata.score or 0.0,
+            )
+            for obj in response.objects
+        ]
+
+    def get_all_chunks(self, *, doc_filter: list[str] | None = None) -> list[RetrievedChunk]:
+        import json as _json
+
+        filter_set = set(doc_filter) if doc_filter else None
+        result: list[RetrievedChunk] = []
+        for obj in self._collection.iterator():
+            if filter_set and obj.properties.get("document_id") not in filter_set:
+                continue
+            result.append(
+                RetrievedChunk(
+                    chunk_id=obj.properties["chunk_id"],
+                    text=obj.properties.get("text") or "",
+                    metadata=_json.loads(obj.properties.get("metadata_json") or "{}"),
+                    score=0.0,
+                )
+            )
+        return result
+
+    def get_all_descriptors(self, processed_documents_dir: Path) -> list[dict[str, Any]]:
+        # Same logic as JsonVectorStore — read summary embeddings from document.json files
+        seen_ids: set[str] = set()
+        for obj in self._collection.iterator():
+            doc_id = obj.properties.get("document_id")
+            if doc_id:
+                seen_ids.add(str(doc_id))
+        result: list[dict[str, Any]] = []
+        for doc_id in seen_ids:
+            doc_path = processed_documents_dir / doc_id / "document.json"
+            if not doc_path.exists():
+                continue
+            try:
+                payload = json.loads(doc_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            embedding = payload.get("summary_embedding")
+            if embedding:
+                result.append({"document_id": doc_id, "summary_embedding": embedding})
+        return result
+
+    def hybrid_query(
+        self,
+        query: str,
+        embedding: list[float],
+        top_k: int,
+        *,
+        doc_filter: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
+        """
+        Single Weaviate hybrid query: BM25 + dense vector fused via RRF internally.
+        alpha=0.5 weights both legs equally (same as our manual rrf_fuse default).
+        """
+        import json as _json
+
+        wvc = self._wvc
+        filters = None
+        if doc_filter:
+            filters = wvc.query.Filter.by_property("document_id").contains_any(doc_filter)
+
+        response = self._collection.query.hybrid(
+            query=query,
+            vector=embedding,
+            alpha=0.5,
+            limit=top_k,
+            filters=filters,
+            return_metadata=wvc.query.MetadataQuery(score=True),
+        )
+        return [
+            RetrievedChunk(
+                chunk_id=obj.properties["chunk_id"],
+                text=obj.properties.get("text") or "",
+                metadata=_json.loads(obj.properties.get("metadata_json") or "{}"),
+                score=obj.metadata.score or 0.0,
+            )
+            for obj in response.objects
+        ]
+
+    def close(self) -> None:
+        self._client.close()
+
+
+def _uuid_from_chunk_id(chunk_id: str) -> str:
+    """Derive a deterministic UUID from a chunk_id so upserts are idempotent."""
+    import hashlib
+
+    digest = hashlib.md5(chunk_id.encode()).hexdigest()
+    return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
+
+
 class ChromaVectorStore:
     def __init__(self, persist_dir: Path, collection_name: str = "rag_agent_pdf") -> None:
         try:
@@ -203,6 +443,13 @@ class DocumentRetriever:
         self.embedding_backend = embedding_backend or build_embedding_backend(settings)
         self.vector_store = vector_store or build_vector_store(settings)
 
+    def __enter__(self) -> "DocumentRetriever":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if isinstance(self.vector_store, WeaviateVectorStore):
+            self.vector_store.close()
+
     def upsert_chunks(self, chunks: list[ChunkRecord]) -> None:
         embeddings = self.embedding_backend.embed_texts([chunk.text for chunk in chunks])
         self.vector_store.upsert(chunks, embeddings)
@@ -230,21 +477,31 @@ class DocumentRetriever:
         parent_threshold: int = 2,
     ) -> list[RetrievedChunk]:
         """
-        Hybrid retrieval: dense vector + BM25 sparse, fused via RRF.
+        Hybrid retrieval: BM25 + dense vector fused via RRF, then region boost
+        and parent-context expansion.
 
-        Post-processing steps applied in order:
-        1. RRF fusion of dense and sparse ranked lists
-        2. Region-type boost (1.3× for table/figure when query has data intent)
-        3. Parent-context expansion (replace clusters of siblings with full section)
+        When the backing store is Weaviate, fusion is delegated to Weaviate's
+        native hybrid query (persistent BM25 index, Go-speed RRF) instead of
+        the Python-side rrf_fuse(). Post-processing steps are identical either way:
+          1. Region-type boost (1.3× for table/figure on data-seeking queries)
+          2. Parent-context expansion (replace sibling clusters with full section)
         """
         k = top_k or self.settings.default_top_k
-        fetch_k = k * 3  # over-fetch so fusion has enough candidates
+        fetch_k = k * 3
 
         query_embedding = self.embedding_backend.embed_texts([question])[0]
-        dense_results = self.vector_store.query(query_embedding, fetch_k, doc_filter=doc_filter or None)
-        sparse_results = self.vector_store.bm25_query(question, fetch_k, doc_filter=doc_filter or None)
 
-        fused = rrf_fuse(dense_results, sparse_results)
+        if isinstance(self.vector_store, WeaviateVectorStore):
+            # Weaviate handles BM25 + dense + RRF in a single indexed query.
+            fused = self.vector_store.hybrid_query(
+                question, query_embedding, fetch_k, doc_filter=doc_filter or None
+            )
+        else:
+            # Fallback: manual BM25 + dense + Python-side RRF for JsonVectorStore.
+            dense_results = self.vector_store.query(query_embedding, fetch_k, doc_filter=doc_filter or None)
+            sparse_results = self.vector_store.bm25_query(question, fetch_k, doc_filter=doc_filter or None)
+            fused = rrf_fuse(dense_results, sparse_results)
+
         fused = apply_region_boost(fused, question)
         fused = fused[:k]
 
@@ -287,6 +544,17 @@ class DocumentRetriever:
 
 
 def build_vector_store(settings: Settings) -> VectorStore:
+    if settings.prefer_weaviate:
+        try:
+            return WeaviateVectorStore(
+                host=settings.weaviate_host,
+                port=settings.weaviate_port,
+                grpc_port=settings.weaviate_grpc_port,
+                collection_name=settings.weaviate_collection,
+                api_key=settings.weaviate_api_key or None,
+            )
+        except RuntimeError:
+            pass
     if settings.prefer_chroma:
         try:
             return ChromaVectorStore(settings.vectorstore_dir)

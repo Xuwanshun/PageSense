@@ -194,6 +194,23 @@ class AppStack(cdk.Stack):
             "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/vlm-base-url-mQRO4V",
         )
 
+        # Weaviate Cloud — cluster URL and Admin API key.
+        # Create these in Secrets Manager before deploying:
+        #   aws secretsmanager create-secret --name rag-agent/weaviate-host \
+        #     --secret-string "njcuadtkqmwnwmi8jz7r5g.c0.us-east-1.aws.weaviate.cloud"
+        #   aws secretsmanager create-secret --name rag-agent/weaviate-api-key \
+        #     --secret-string "<your-admin-api-key>"
+        weaviate_host_secret = secretsmanager.Secret.from_secret_complete_arn(
+            self,
+            "WeaviateHostSecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/weaviate-host-HN9KG0",
+        )
+        weaviate_api_key_secret = secretsmanager.Secret.from_secret_complete_arn(
+            self,
+            "WeaviateApiKeySecret",
+            "arn:aws:secretsmanager:ca-central-1:604561274097:secret:rag-agent/weaviate-api-key-SaBsTZ",
+        )
+
         # Grant the execution role access to all rag-agent/* secrets using a
         # wildcard ARN. Secrets Manager appends a random suffix to ARNs
         # (e.g. rag-agent/foo-Ab1Cd2), so name-based lookups produce incomplete
@@ -267,6 +284,8 @@ class AppStack(cdk.Stack):
                 "QWEN_BASE_URL": self.node.try_get_context("qwen_base_url") or "",
                 "QWEN_MODEL": self.node.try_get_context("qwen_model") or "Qwen/Qwen3-VL-4B-Instruct",
                 "QWEN_API_KEY": "not-needed",
+                "PREFER_WEAVIATE": "true",
+                "WEAVIATE_COLLECTION": "RagChunk",
             },
             # Secrets: ECS fetches these from Secrets Manager at container
             # startup and injects them as environment variables.
@@ -278,6 +297,8 @@ class AppStack(cdk.Stack):
                 "GOOGLE_CLIENT_ID": ecs.Secret.from_secrets_manager(google_client_id_secret),
                 "GOOGLE_CLIENT_SECRET": ecs.Secret.from_secrets_manager(google_client_secret_secret),
                 "VLM_BASE_URL": ecs.Secret.from_secrets_manager(vlm_base_url_secret),
+                "WEAVIATE_HOST": ecs.Secret.from_secrets_manager(weaviate_host_secret),
+                "WEAVIATE_API_KEY": ecs.Secret.from_secrets_manager(weaviate_api_key_secret),
             },
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="ecs",

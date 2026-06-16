@@ -69,3 +69,8 @@ itsdangerous>=2.0,<3
 # Uncomment to use ChromaDB instead of the built-in JSON vector store.
 # Also set PREFER_CHROMA=true in your .env or environment.
 # chromadb>=0.5,<1
+
+# ── Optional: Weaviate vector store ──────────────────────────────────────────
+# Uncomment to use Weaviate instead of the built-in JSON vector store.
+# Also set PREFER_WEAVIATE=true and run Weaviate (see docker-compose.yml).
+weaviate-client>=4.0,<5

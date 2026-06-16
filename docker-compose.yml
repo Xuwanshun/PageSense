@@ -27,6 +27,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    restart: unless-stopped
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      # No vectorizer modules — we send pre-computed OpenAI embeddings directly.
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: "node1"
+      # Expose both REST (8080) and gRPC (50051) APIs.
+      ENABLE_API_BASED_MODULES: "false"
+
   rag:
     build:
       context: .
@@ -60,6 +77,11 @@ services:
       # Point to the named volume where Paddle models are cached
       PADDLE_CACHE_DIR: /app/paddle_models
       PADDLE_PDX_CACHE_HOME: /app/paddle_models
+      # Weaviate — points to the weaviate service by Docker's internal DNS
+      PREFER_WEAVIATE: "true"
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
 
     volumes:
       # Mount your local ./data directory into the container at /app/data.
@@ -88,9 +110,12 @@ services:
       start_period: 120s
 
     restart: unless-stopped
+    depends_on:
+      - weaviate
 
 # Named volumes are managed by Docker (persisted across container restarts).
 # They live in Docker's internal storage (usually /var/lib/docker/volumes/).
 # Run `docker volume ls` to see them, `docker volume rm <name>` to delete.
 volumes:
   paddle_models:
+  weaviate_data:

@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     # built-in JSON vector store.
     prefer_chroma: bool = False
 
+    # ── Weaviate vector store ─────────────────────────────────────────────────
+    # Set PREFER_WEAVIATE=true to use Weaviate instead of the JSON vector store.
+    # Requires weaviate-client to be installed and a running Weaviate instance.
+    prefer_weaviate: bool = False
+    weaviate_host: str = "localhost"
+    weaviate_port: int = 8080
+    weaviate_grpc_port: int = 50051
+    weaviate_collection: str = "RagChunk"
+    # Set for Weaviate Cloud — leave empty for local/self-hosted.
+    weaviate_api_key: str = ""
+
     # ── Logging ───────────────────────────────────────────────────────────────
     # LOG_LEVEL: standard Python log level (DEBUG, INFO, WARNING, ERROR)
     log_level: str = "INFO"

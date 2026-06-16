@@ -139,6 +139,8 @@ def answer_question_from_frozen_artifacts(
         if faith_result.recommended_action != "return_as_is":
             answer = checker.correct(question, answer, faith_result, retrieved)
 
+    retriever.__exit__(None, None, None)
+
     return MultiAgentQAResponse(
         question=question,
         answer=answer,
