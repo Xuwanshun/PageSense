@@ -171,7 +171,7 @@ def _describe_crop(
 
     if settings.vlm_base_url:
         try:
-            return _call_vlm(
+            result = _call_vlm(
                 crop_path=crop_path,
                 region_type=region_type,
                 context_text=context_text,

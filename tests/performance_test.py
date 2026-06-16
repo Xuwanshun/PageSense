@@ -15,11 +15,10 @@ Prerequisites:
 from __future__ import annotations
 
 import statistics
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-
-import subprocess
 
 import requests
 

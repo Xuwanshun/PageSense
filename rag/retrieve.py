@@ -443,7 +443,7 @@ class DocumentRetriever:
         self.embedding_backend = embedding_backend or build_embedding_backend(settings)
         self.vector_store = vector_store or build_vector_store(settings)
 
-    def __enter__(self) -> "DocumentRetriever":
+    def __enter__(self) -> DocumentRetriever:
         return self
 
     def __exit__(self, *_: object) -> None:
