@@ -65,7 +65,13 @@ def _run_pipeline(
             jobs[document_id]["status"] = "preprocessing"
             _write_job_status(settings, document_id, {**base, "status": "preprocessing"})
 
-            result = preprocess_document(dest, settings=settings, force=True, document_id=document_id)
+            def _on_progress(pages_done: int, total_pages: int) -> None:
+                jobs[document_id]["pages_done"] = pages_done
+                jobs[document_id]["total_pages"] = total_pages
+
+            result = preprocess_document(
+                dest, settings=settings, force=True, document_id=document_id, on_progress=_on_progress
+            )
 
             jobs[document_id]["status"] = "indexing"
             _write_job_status(settings, document_id, {**base, "status": "indexing"})
