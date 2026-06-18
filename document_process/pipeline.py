@@ -58,7 +58,7 @@ class DocumentPreprocessingPipeline:
         self.settings = settings
         self.loader = loader or DocumentLoaderService(settings)
         self.ocr = ocr or OCRService()
-        self.reading_order = reading_order or ReadingOrderService()
+        self.reading_order = reading_order or ReadingOrderService(settings)
         self.layout = layout or LayoutDetectionService()
         self.association = association or AssociationService()
         self.cropping = cropping or CroppingService()

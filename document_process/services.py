@@ -231,8 +231,22 @@ class OCRService:
 
 
 class ReadingOrderService:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings
+        self._layout_model: Any = None  # loaded lazily
+
     def resolve(self, pages: list[OCRPageResult]) -> tuple[dict[str, Any], list[ProcessingIssue]]:
         logger.info("Resolving reading order for %s OCR page(s)", len(pages))
+        use_lr = self._settings is not None and self._settings.use_layout_reader
+        if use_lr:
+            return self._resolve_layout_reader(pages)
+        return self._resolve_bbox_sort(pages)
+
+    # ── geometric fallback ────────────────────────────────────────────────────
+
+    def _resolve_bbox_sort(
+        self, pages: list[OCRPageResult]
+    ) -> tuple[dict[str, Any], list[ProcessingIssue]]:
         ordered_text: list[dict[str, Any]] = []
         all_ids: list[str] = []
         for page in pages:
@@ -243,6 +257,71 @@ class ReadingOrderService:
             all_ids.extend(ids)
             ordered_text.append({"page_number": page.page_number, "ordered_item_ids": ids})
         return {"resolver": "ocr_bbox_sort_v1", "document_order_item_ids": all_ids, "pages": ordered_text}, []
+
+    # ── LayoutReader (LayoutLMv3) ─────────────────────────────────────────────
+
+    def _load_layout_model(self) -> Any:
+        if self._layout_model is None:
+            try:
+                from transformers import LayoutLMv3ForTokenClassification
+
+                model_id = self._settings.layout_reader_model if self._settings else "hantian/layoutreader"
+                logger.info("Loading LayoutReader model %s", model_id)
+                self._layout_model = LayoutLMv3ForTokenClassification.from_pretrained(model_id)
+                self._layout_model.eval()
+                logger.info("LayoutReader model loaded")
+            except Exception as exc:
+                logger.warning("Failed to load LayoutReader model, falling back to bbox sort: %s", exc)
+        return self._layout_model
+
+    def _resolve_layout_reader(
+        self, pages: list[OCRPageResult]
+    ) -> tuple[dict[str, Any], list[ProcessingIssue]]:
+        model = self._load_layout_model()
+        if model is None:
+            logger.warning("LayoutReader unavailable — falling back to bbox sort")
+            return self._resolve_bbox_sort(pages)
+
+        ordered_text: list[dict[str, Any]] = []
+        all_ids: list[str] = []
+        issues: list[ProcessingIssue] = []
+
+        for page in pages:
+            items = page.items
+            if not items:
+                ordered_text.append({"page_number": page.page_number, "ordered_item_ids": []})
+                continue
+
+            try:
+                order_positions = _layout_reader_order(items, model)
+                ordered_items = [items[i] for i in order_positions]
+            except Exception as exc:
+                logger.warning(
+                    "LayoutReader failed on page %s, falling back to bbox sort: %s",
+                    page.page_number,
+                    exc,
+                )
+                issues.append(
+                    ProcessingIssue(
+                        code="layout_reader_fallback",
+                        message=f"LayoutReader failed on page {page.page_number}: {exc}",
+                        level="warning",
+                        page_number=page.page_number,
+                    )
+                )
+                ordered_items = sorted(items, key=_reading_order_key)
+
+            for index, item in enumerate(ordered_items, start=1):
+                item.reading_order = index
+            ids = [item.item_id for item in ordered_items]
+            all_ids.extend(ids)
+            ordered_text.append({"page_number": page.page_number, "ordered_item_ids": ids})
+
+        return {
+            "resolver": "layout_reader_v3",
+            "document_order_item_ids": all_ids,
+            "pages": ordered_text,
+        }, issues
 
 
 class LayoutDetectionService:
@@ -816,6 +895,85 @@ def _bbox_from_layout_box(value: Any) -> BoundingBox | None:
     if not isinstance(value, list) or len(value) != 4:
         return None
     return BoundingBox.from_list([float(item) for item in value])
+
+
+def _layout_reader_order(items: list[OCRTextItem], model: Any) -> list[int]:
+    """Return item indices sorted by LayoutReader predicted reading order.
+
+    Normalises bounding boxes to the 0-1000 range LayoutLMv3 expects, runs the
+    model, then maps the per-item order positions back to the original indices.
+    Handles the MAX_LEN=510 cap by falling back to bbox sort for the overflow
+    items and appending them at the end.
+    """
+    import torch
+
+    MAX_LEN = 510
+    CLS_TOKEN_ID = 0
+    UNK_TOKEN_ID = 3
+    EOS_TOKEN_ID = 2
+
+    # Estimate page dimensions from the union of all bboxes (+ 10% padding).
+    max_x = max(item.bbox.x1 for item in items) * 1.1 or 1.0
+    max_y = max(item.bbox.y1 for item in items) * 1.1 or 1.0
+
+    def _norm(item: OCRTextItem) -> list[int]:
+        return [
+            int((item.bbox.x0 / max_x) * 1000),
+            int((item.bbox.y0 / max_y) * 1000),
+            int((item.bbox.x1 / max_x) * 1000),
+            int((item.bbox.y1 / max_y) * 1000),
+        ]
+
+    active = items[:MAX_LEN]
+    boxes = [_norm(it) for it in active]
+    n = len(boxes)
+
+    # Build model inputs (CLS + boxes + EOS).
+    bbox_tensor = torch.tensor([[0, 0, 0, 0]] + boxes + [[0, 0, 0, 0]])
+    input_ids = torch.tensor([CLS_TOKEN_ID] + [UNK_TOKEN_ID] * n + [EOS_TOKEN_ID])
+    attention_mask = torch.ones(n + 2, dtype=torch.long)
+
+    with torch.no_grad():
+        logits = model(
+            bbox=bbox_tensor.unsqueeze(0),
+            input_ids=input_ids.unsqueeze(0),
+            attention_mask=attention_mask.unsqueeze(0),
+        ).logits.squeeze(0)
+
+    # Parse logits → reading order position for each active item.
+    order_positions = _parse_layout_logits(logits, n)
+
+    # Map position → original index and sort.
+    idx_by_position = sorted(range(n), key=lambda i: order_positions[i])
+
+    # Overflow items appended in geometric order.
+    overflow_indices = list(range(MAX_LEN, len(items)))
+    overflow_indices.sort(key=lambda i: _reading_order_key(items[i]))
+
+    return idx_by_position + overflow_indices
+
+
+def _parse_layout_logits(logits: Any, length: int) -> list[int]:
+    """Convert LayoutLMv3 logits to a reading-order position per item."""
+    from collections import defaultdict
+
+    logits = logits[1 : length + 1, :length]
+    orders = logits.argsort(descending=False).tolist()
+    ret = [o.pop() for o in orders]
+
+    while True:
+        order_to_idxes: dict[int, list[int]] = defaultdict(list)
+        for idx, order in enumerate(ret):
+            order_to_idxes[order].append(idx)
+        order_to_idxes = {k: v for k, v in order_to_idxes.items() if len(v) > 1}
+        if not order_to_idxes:
+            break
+        for order, idxes in order_to_idxes.items():
+            idxes_by_logit = sorted(idxes, key=lambda i: logits[i, order], reverse=True)
+            for idx in idxes_by_logit[1:]:
+                ret[idx] = orders[idx].pop()
+
+    return ret
 
 
 def _reading_order_key(item: OCRTextItem) -> tuple[int, float, float]:

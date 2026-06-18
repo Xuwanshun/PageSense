@@ -22,17 +22,17 @@ set -e
 REGION="${AWS_REGION:-ca-central-1}"
 
 # ── Edit these to change which flags are on/off ──────────────────────────────
-# Keep on: big retrieval quality gains, zero or low query latency cost
 FLAG_USE_QUERY_ENHANCEMENT="true"
-FLAG_USE_HYBRID_RETRIEVAL="true"
+FLAG_USE_HYBRID_RETRIEVAL="true"   # Python BM25 rebuilds from scratch each query — use Weaviate native hybrid instead
 FLAG_USE_DOCUMENT_INTELLIGENCE="true"
 FLAG_USE_ADAPTIVE_CHUNKING="true"
 FLAG_USE_VLM_SUMMARIES="true"
+FLAG_USE_LLM_RERANKER="true"
+FLAG_USE_CONTEXT_COMPRESSION="true"
+FLAG_USE_FAITHFULNESS_CHECK="true"
 
-# Turn off: each adds 1-2 sequential LLM API calls per query
-FLAG_USE_LLM_RERANKER="false"
-FLAG_USE_CONTEXT_COMPRESSION="false"
-FLAG_USE_FAITHFULNESS_CHECK="false"
+# Vector store backend
+FLAG_PREFER_WEAVIATE="true"         # route queries to Weaviate Cloud (pre-built indexes, fast)
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "Fetching ECS cluster and service names..."
@@ -78,6 +78,7 @@ flags = {
     "USE_LLM_RERANKER":        "__FLAG_USE_LLM_RERANKER__",
     "USE_CONTEXT_COMPRESSION": "__FLAG_USE_CONTEXT_COMPRESSION__",
     "USE_FAITHFULNESS_CHECK":  "__FLAG_USE_FAITHFULNESS_CHECK__",
+    "PREFER_WEAVIATE":         "__FLAG_PREFER_WEAVIATE__",
 }
 
 data = json.load(open("/tmp/task-def.json"))
@@ -109,6 +110,7 @@ sed -i '' \
   -e "s/__FLAG_USE_LLM_RERANKER__/$FLAG_USE_LLM_RERANKER/g" \
   -e "s/__FLAG_USE_CONTEXT_COMPRESSION__/$FLAG_USE_CONTEXT_COMPRESSION/g" \
   -e "s/__FLAG_USE_FAITHFULNESS_CHECK__/$FLAG_USE_FAITHFULNESS_CHECK/g" \
+  -e "s/__FLAG_PREFER_WEAVIATE__/$FLAG_PREFER_WEAVIATE/g" \
   /tmp/task-def-patched.json
 
 echo ""
@@ -141,6 +143,7 @@ echo "  USE_VLM_SUMMARIES=$FLAG_USE_VLM_SUMMARIES"
 echo "  USE_LLM_RERANKER=$FLAG_USE_LLM_RERANKER"
 echo "  USE_CONTEXT_COMPRESSION=$FLAG_USE_CONTEXT_COMPRESSION"
 echo "  USE_FAITHFULNESS_CHECK=$FLAG_USE_FAITHFULNESS_CHECK"
+echo "  PREFER_WEAVIATE=$FLAG_PREFER_WEAVIATE"
 echo ""
 echo "Watch rollout:"
 echo "  aws ecs describe-services --cluster $CLUSTER --services $SERVICE --region $REGION --query 'services[0].{running:runningCount,pending:pendingCount,desired:desiredCount}'"
