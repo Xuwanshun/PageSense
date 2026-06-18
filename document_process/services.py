@@ -244,9 +244,7 @@ class ReadingOrderService:
 
     # ── geometric fallback ────────────────────────────────────────────────────
 
-    def _resolve_bbox_sort(
-        self, pages: list[OCRPageResult]
-    ) -> tuple[dict[str, Any], list[ProcessingIssue]]:
+    def _resolve_bbox_sort(self, pages: list[OCRPageResult]) -> tuple[dict[str, Any], list[ProcessingIssue]]:
         ordered_text: list[dict[str, Any]] = []
         all_ids: list[str] = []
         for page in pages:
@@ -274,9 +272,7 @@ class ReadingOrderService:
                 logger.warning("Failed to load LayoutReader model, falling back to bbox sort: %s", exc)
         return self._layout_model
 
-    def _resolve_layout_reader(
-        self, pages: list[OCRPageResult]
-    ) -> tuple[dict[str, Any], list[ProcessingIssue]]:
+    def _resolve_layout_reader(self, pages: list[OCRPageResult]) -> tuple[dict[str, Any], list[ProcessingIssue]]:
         model = self._load_layout_model()
         if model is None:
             logger.warning("LayoutReader unavailable — falling back to bbox sort")

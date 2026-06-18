@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Retrieval metrics (exact match, no LLM needed)
 # ---------------------------------------------------------------------------
 
+
 def hit_rate(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
     return 1.0 if any(cid in relevant_ids for cid in retrieved_ids) else 0.0
 
@@ -64,6 +65,7 @@ def recall_at_k(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
 # Generation metrics (LLM-as-judge)
 # ---------------------------------------------------------------------------
 
+
 def _score(client: OpenAIJSONModelClient, system: str, user: str, key: str) -> float:
     """Call the LLM and return a single float from the JSON response."""
     try:
@@ -89,7 +91,7 @@ def faithfulness(
     contexts: list[str],
 ) -> float:
     """Fraction of answer claims that are supported by the retrieved context."""
-    context_block = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(contexts))
+    context_block = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(contexts))
     return _score(
         client,
         system=(
@@ -127,7 +129,7 @@ def context_relevance(
     contexts: list[str],
 ) -> float:
     """Are the retrieved passages relevant to the question? (0-1)"""
-    context_block = "\n\n".join(f"[{i+1}] {c[:400]}" for i, c in enumerate(contexts))
+    context_block = "\n\n".join(f"[{i + 1}] {c[:400]}" for i, c in enumerate(contexts))
     return _score(
         client,
         system=(
@@ -147,7 +149,7 @@ def context_recall(
     contexts: list[str],
 ) -> float:
     """Fraction of ground-truth statements that are covered by the retrieved context."""
-    context_block = "\n\n".join(f"[{i+1}] {c[:400]}" for i, c in enumerate(contexts))
+    context_block = "\n\n".join(f"[{i + 1}] {c[:400]}" for i, c in enumerate(contexts))
     return _score(
         client,
         system=(
@@ -181,6 +183,7 @@ def answer_correctness(
 # ---------------------------------------------------------------------------
 # Batch scorer
 # ---------------------------------------------------------------------------
+
 
 def score_sample(
     client: OpenAIJSONModelClient,

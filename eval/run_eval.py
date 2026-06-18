@@ -205,7 +205,9 @@ def _build_report(
             continue
         bar = "█" * int(summary[key] * 20)
         if key in redundant:
-            lines.append(f"  {label:<22} {summary[key]:.3f}  {bar}  ⚠ redundant (1 label/question = hit_rate/{len(results[0]['sources']) if results else 'K'})")
+            lines.append(
+                f"  {label:<22} {summary[key]:.3f}  {bar}  ⚠ redundant (1 label/question = hit_rate/{len(results[0]['sources']) if results else 'K'})"
+            )
         else:
             lines.append(f"  {label:<22} {summary[key]:.3f}  {bar}")
 
