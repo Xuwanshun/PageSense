@@ -46,6 +46,7 @@ MODEL_ID = "azhuang3/qwen3_vlm_task"
     gpu="A10G",
     image=image,
     scaledown_window=300,  # scale to zero after 5 min idle
+    secrets=[modal.Secret.from_name("huggingface")],
 )
 @modal.concurrent(max_inputs=4)
 class Model:

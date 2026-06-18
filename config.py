@@ -145,6 +145,15 @@ class Settings(BaseSettings):
     # exceeds this threshold.
     doc_filter_threshold: float = 0.20
 
+    # ── Reading order ────────────────────────────────────────────────────────
+    # When enabled, uses LayoutLMv3 (hantian/layoutreader) to determine reading
+    # order instead of the default geometric bbox sort. Handles multi-column
+    # layouts, sidebars, and other complex page structures correctly.
+    # Requires torch and transformers to be installed.
+    use_layout_reader: bool = False
+    # HuggingFace model ID for LayoutReader. Override to use a local checkpoint.
+    layout_reader_model: str = "hantian/layoutreader"
+
     # ── Query enhancement ─────────────────────────────────────────────────────
     # When enabled, simple queries are enhanced with HyDE (hypothetical document
     # embeddings) and complex queries are decomposed into sub-queries before

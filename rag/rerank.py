@@ -156,12 +156,15 @@ def _format_candidate_block(chunks: list[RetrievedChunk], visual_summaries: dict
 def _best_content(chunk: RetrievedChunk, visual_summaries: dict[str, Any]) -> str:
     """
     Return the most informative content string for a chunk.
-    For table/figure chunks prefer the structured visual summary over raw OCR text.
+
+    Figures have no OCR text, so the VLM summary is the only signal — always use it.
+    Tables contain exact numbers in OCR text; the VLM summary paraphrases and can
+    drop specific values, so we keep the OCR text for tables.
     """
     region_ids: list[str] = chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
     for rid in region_ids:
         summary = visual_summaries.get(str(rid))
-        if summary and summary.get("summary_text"):
+        if summary and summary.get("summary_text") and summary.get("region_type") == "figure":
             return summary["summary_text"]
     return chunk.text
 

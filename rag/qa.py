@@ -59,7 +59,7 @@ def answer_question_from_frozen_artifacts(
             )
         doc_filter = matched_docs
 
-    fetch_k = (top_k or resolved_settings.default_top_k) * 2
+    fetch_k = (top_k or resolved_settings.default_top_k) * 3
 
     if resolved_settings.use_hybrid_retrieval:
         # Hybrid path: BM25 + dense fusion with RRF, region boost, parent expansion.
@@ -99,6 +99,11 @@ def answer_question_from_frozen_artifacts(
 
     # First-pass lightweight rerank (token overlap boost)
     raw_chunks = _rerank_chunks(question, raw_chunks)
+
+    # Type-aware filter: if the question is clearly about a table or figure,
+    # prefer chunks whose region_types include that type (course L11 §5 pattern).
+    raw_chunks = _filter_by_region_type(question, raw_chunks)
+
     raw_chunks = raw_chunks[: top_k or resolved_settings.default_top_k]
 
     # Second-pass LLM rerank (precision filter) — loads visual summaries first
@@ -283,3 +288,33 @@ def _load_json(path: Path) -> Any:
 
 def _token_set(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9]{3,}", value.lower())}
+
+
+def _filter_by_region_type(question: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Reorder chunks to surface the matching region type when the question signals one.
+
+    Mirrors the course L11 §5 hybrid-search pattern: filter by chunk_type
+    (table / figure) when the intent is clear. Here we do it post-retrieval
+    so no vector-store interface changes are needed.
+
+    If fewer than half the typed chunks are found we fall back to the original
+    order so we never return an empty result set.
+    """
+    lowered = question.lower()
+    table_terms = {"table", "row", "column", "cell", "score", "bleu", "flop", "cost", "result"}
+    figure_terms = {"figure", "chart", "diagram", "image", "plot", "shows", "depicted", "visualization"}
+
+    if any(term in lowered for term in figure_terms):
+        target = "figure"
+    elif any(term in lowered for term in table_terms):
+        target = "table"
+    else:
+        return chunks
+
+    typed = [c for c in chunks if target in (c.metadata.get("region_types") or [])]
+    others = [c for c in chunks if c not in typed]
+
+    # Only reorder if we actually found typed chunks — otherwise keep original order
+    if typed:
+        return typed + others
+    return chunks

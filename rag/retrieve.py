@@ -444,8 +444,10 @@ class DocumentRetriever:
         if isinstance(self.vector_store, WeaviateVectorStore):
             self.vector_store.close()
 
-    def upsert_chunks(self, chunks: list[ChunkRecord]) -> None:
-        embeddings = self.embedding_backend.embed_texts([chunk.text for chunk in chunks])
+    def upsert_chunks(self, chunks: list[ChunkRecord], *, visual_summaries: dict[str, Any] | None = None) -> None:
+        vs = visual_summaries or {}
+        embed_texts = [_figure_embed_text(chunk, vs) for chunk in chunks]
+        embeddings = self.embedding_backend.embed_texts(embed_texts)
         self.vector_store.upsert(chunks, embeddings)
 
     def retrieve(
@@ -519,6 +521,7 @@ class DocumentRetriever:
         *,
         document_id: str | None = None,
         source_filename: str | None = None,
+        visual_summaries: dict[str, Any] | None = None,
     ) -> int:
         records = chunk_records_from_processed_chunks(
             chunks,
@@ -527,7 +530,7 @@ class DocumentRetriever:
         )
         if not records:
             return 0
-        self.upsert_chunks(records)
+        self.upsert_chunks(records, visual_summaries=visual_summaries)
         return len(records)
 
     def answer_question(self, question: str, *, top_k: int | None = None) -> QAResponse:
@@ -597,10 +600,12 @@ def index_all_processed_documents(
             if not chunks:
                 continue
             document_id = document.document_id if document else document_dir.name
+            visual_summaries = _load_visual_summaries_for_indexing(document_dir)
             indexed[document_id] = active_retriever.index_processed_chunks(
                 chunks,
                 document_id=document_id,
                 source_filename=document.source_filename if document else None,
+                visual_summaries=visual_summaries,
             )
     finally:
         if owned:
@@ -699,6 +704,34 @@ def _load_json(path: Path) -> Any:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_visual_summaries_for_indexing(document_dir: Path) -> dict[str, Any]:
+    """Load visual_summaries.json keyed by region_id for use during indexing."""
+    path = document_dir / "visual_summaries.json"
+    if not path.exists():
+        return {}
+    items = json.loads(path.read_text(encoding="utf-8"))
+    return {str(item["region_id"]): item for item in items if isinstance(item, dict)}
+
+
+def _figure_embed_text(chunk: ChunkRecord, visual_summaries: dict[str, Any]) -> str:
+    """Return VLM summary text for figure chunks so they embed semantically.
+
+    Figures have no useful OCR text — the pixels carry the meaning.
+    Using the VLM description at index time mirrors what ADE does: each
+    figure gets an embedding derived from its visual description so it
+    can be retrieved by semantic queries about its content.
+
+    Tables are left as-is because their OCR text preserves exact numbers
+    that a summarised description would paraphrase away.
+    """
+    region_ids: list[str] = chunk.metadata.get("source_region_ids") or chunk.metadata.get("region_ids") or []
+    for rid in region_ids:
+        summary = visual_summaries.get(str(rid))
+        if summary and summary.get("summary_text") and summary.get("region_type") == "figure":
+            return summary["summary_text"]
+    return chunk.text
 
 
 def _resolve_processed_document_dir(document_id_or_path: str | Path, settings: Settings) -> Path:

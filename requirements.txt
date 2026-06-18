@@ -74,3 +74,9 @@ itsdangerous>=2.0,<3
 # Uncomment to use Weaviate instead of the built-in JSON vector store.
 # Also set PREFER_WEAVIATE=true and run Weaviate (see docker-compose.yml).
 weaviate-client>=4.0,<5
+
+# ── LayoutReader reading order ────────────────────────────────────────────────
+# Required when USE_LAYOUT_READER=true. LayoutLMv3 determines correct reading
+# order for multi-column and complex layouts (replaces geometric bbox sort).
+torch>=2.0
+transformers>=4.40,<5
